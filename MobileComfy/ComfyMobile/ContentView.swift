@@ -1,154 +1,89 @@
 import SwiftUI
+import UIKit
 
 struct ContentView: View {
     @EnvironmentObject private var store: WorkflowStore
     @AppStorage("comfyServerURL") private var serverURL = "http://100.x.x.x:8188"
 
-    @State private var showingImporter = false
     @State private var showingSettings = false
-    @State private var showingEditor = false
-    @State private var showingServerBrowser = false
-    @State private var serverOnline = false
     @State private var busy = false
-    @State private var statusText = "Не проверено"
-    @State private var importAlertTitle = ""
-    @State private var importAlertMessage = ""
-    @State private var showingImportAlert = false
+    @State private var statusText = ""
 
     var body: some View {
         NavigationStack {
             List {
-                connectionSection
-                workflowSection
+                workflowHeader
                 parameterSection
                 actionSection
             }
-            .navigationTitle("Comfy Mobile")
+            .listStyle(.insetGrouped)
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    EmptyView()
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showingSettings = true } label: {
                         Image(systemName: "gearshape")
                     }
                 }
             }
-            .refreshable { await checkServer() }
-            .task { await checkServer() }
-            .sheet(isPresented: $showingImporter) {
-                WorkflowDocumentPicker(
-                    onPick: { url in
-                        showingImporter = false
-                        importFile(url)
-                    },
-                    onCancel: {
-                        showingImporter = false
-                    }
-                )
-                .ignoresSafeArea()
-            }
             .sheet(isPresented: $showingSettings) {
-                SettingsView(serverURL: $serverURL) {
-                    Task { await checkServer() }
-                }
-            }
-            .fullScreenCover(isPresented: $showingEditor) {
-                if let item = store.selected {
-                    EditorScreen(serverURL: serverURL, item: item)
-                        .environmentObject(store)
-                }
-            }
-            .fullScreenCover(isPresented: $showingServerBrowser) {
-                ServerBrowserScreen(serverURL: serverURL)
-            }
-            .alert(importAlertTitle, isPresented: $showingImportAlert) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text(importAlertMessage)
+                SettingsView(serverURL: $serverURL)
+                    .environmentObject(store)
             }
         }
     }
 
-    private var connectionSection: some View {
-        Section("ComfyUI") {
-            HStack {
-                Circle()
-                    .fill(serverOnline ? .green : .red)
-                    .frame(width: 10, height: 10)
+    @ViewBuilder
+    private var workflowHeader: some View {
+        Section {
+            if let item = store.selected {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(item.name)
+                            .font(.title2.bold())
+                            .lineLimit(2)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(serverOnline ? "Online" : "Offline")
-                        .font(.headline)
-                    Text(serverURL)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-
-                Spacer()
-
-                Button("Проверить") {
-                    Task { await checkServer() }
-                }
-            }
-
-            Text(statusText)
-                .font(.caption)
-                .foregroundStyle(serverOnline ? .green : .secondary)
-                .textSelection(.enabled)
-
-            Button {
-                showingServerBrowser = true
-            } label: {
-                Label("Открыть ComfyUI для проверки", systemImage: "safari")
-            }
-        }
-    }
-
-    private var workflowSection: some View {
-        Section("Workflow") {
-            if store.workflows.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("Нет workflow", systemImage: "point.3.connected.trianglepath.dotted")
-                        .font(.headline)
-                    Text("Нажми «Импорт JSON» и выбери обычный workflow, сохранённый из ComfyUI.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            } else {
-                Picker("Выбран", selection: Binding(
-                    get: { store.selectedID ?? store.workflows.first!.id },
-                    set: { store.select($0) }
-                )) {
-                    ForEach(store.workflows) { item in
-                        Text(item.name).tag(item.id)
+                        if !statusText.isEmpty {
+                            Text(statusText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
                     }
-                }
 
-                if let item = store.selected {
-                    Label(
-                        item.apiPromptJSON != nil ? "Готов к генерации" : "Импортирован • открой редактор для API prompt",
-                        systemImage: item.apiPromptJSON != nil ? "checkmark.circle.fill" : "arrow.triangle.2.circlepath"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(item.apiPromptJSON != nil ? .green : .orange)
+                    Spacer()
 
                     Button {
-                        showingEditor = true
+                        openComfyInBrowser()
                     } label: {
-                        Label("Редактировать в настоящем ComfyUI", systemImage: "square.grid.3x3.fill")
+                        Image(systemName: "pencil")
+                            .font(.title2.weight(.semibold))
+                            .frame(width: 44, height: 44)
                     }
-
-                    Button(role: .destructive) {
-                        store.delete(item)
-                    } label: {
-                        Label("Удалить workflow", systemImage: "trash")
-                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Открыть workflow в ComfyUI")
                 }
-            }
-
-            Button {
-                showingImporter = true
-            } label: {
-                Label("Импорт JSON из приложения «Файлы»", systemImage: "folder.badge.plus")
+                .padding(.vertical, 4)
+            } else {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Workflow не выбран")
+                            .font(.title2.bold())
+                        Text("Добавь workflow в настройках")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button {
+                        showingSettings = true
+                    } label: {
+                        Image(systemName: "gearshape")
+                            .font(.title2)
+                    }
+                    .buttonStyle(.borderless)
+                }
             }
         }
     }
@@ -157,10 +92,10 @@ struct ContentView: View {
     private var parameterSection: some View {
         if let item = store.selected {
             let parameters = store.parameters(for: item)
-            Section("Настройки workflow") {
+            Section {
                 if parameters.isEmpty {
                     Text(item.apiPromptJSON == nil
-                         ? "Workflow импортирован. Открой его в редакторе ComfyUI — приложение автоматически получит API prompt."
+                         ? "Для этого workflow пока нет API-параметров. Настрой импорт в ⚙️."
                          : "В API workflow не найдено поддерживаемых редактируемых полей.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -182,57 +117,47 @@ struct ContentView: View {
             } label: {
                 HStack {
                     Spacer()
-                    if busy { ProgressView().padding(.trailing, 6) }
+                    if busy {
+                        ProgressView()
+                            .padding(.trailing, 6)
+                    }
                     Label("GENERATE", systemImage: "sparkles")
                         .fontWeight(.bold)
                     Spacer()
                 }
             }
-            .disabled(busy || !serverOnline || store.selected?.apiPromptJSON == nil)
-        } footer: {
-            Text("Редактор — настоящий интерфейс ComfyUI. После изменения графа workflow автоматически синхронизируется обратно.")
+            .disabled(busy || store.selected?.apiPromptJSON == nil)
         }
     }
 
-    private func importFile(_ url: URL) {
-        do {
-            let data = try Data(contentsOf: url)
-            guard !data.isEmpty else {
-                throw NSError(domain: "ComfyMobile", code: 2, userInfo: [NSLocalizedDescriptionKey: "Выбранный файл пустой"])
+    private func openComfyInBrowser() {
+        guard let url = ComfyClient.normalizedBaseURL(serverURL) else {
+            statusText = "Неверный адрес ComfyUI. Исправь его в ⚙️."
+            return
+        }
+
+        UIApplication.shared.open(url, options: [:]) { success in
+            if !success {
+                Task { @MainActor in
+                    statusText = "Не удалось открыть Safari"
+                }
             }
-            try store.importJSON(data: data, suggestedName: url.lastPathComponent)
-
-            importAlertTitle = "Workflow импортирован"
-            importAlertMessage = url.lastPathComponent + "\nТеперь можно открыть его в настоящем ComfyUI."
-            showingImportAlert = true
-        } catch {
-            importAlertTitle = "Не удалось импортировать"
-            importAlertMessage = error.localizedDescription
-            showingImportAlert = true
-        }
-    }
-
-    @MainActor
-    private func checkServer() async {
-        statusText = "Проверяю…"
-        let result = await ComfyClient.check(base: serverURL)
-        serverOnline = result.online
-        statusText = result.message
-
-        if let normalized = result.normalizedURL, normalized != serverURL {
-            serverURL = normalized
         }
     }
 
     @MainActor
     private func generate() async {
-        guard let prompt = store.apiPromptObject() else { return }
+        guard let prompt = store.apiPromptObject() else {
+            statusText = "У workflow нет API prompt"
+            return
+        }
+
         busy = true
         defer { busy = false }
 
         do {
             let promptID = try await ComfyClient.queue(base: serverURL, prompt: prompt)
-            statusText = "Запущено • prompt_id: " + promptID
+            statusText = "Запущено • " + promptID
         } catch {
             statusText = error.localizedDescription
         }
@@ -274,110 +199,211 @@ private struct ParameterRow: View {
             } else if parameter.kind == .text {
                 TextEditor(text: $value)
                     .frame(minHeight: 74)
-                    .onChange(of: value) { _, newValue in onChange(newValue) }
+                    .onChange(of: value) { _, newValue in
+                        onChange(newValue)
+                    }
             } else {
                 TextField(parameter.key, text: $value)
                     .keyboardType(parameter.kind == .integer ? .numbersAndPunctuation : .decimalPad)
                     .textFieldStyle(.roundedBorder)
-                    .onSubmit { onChange(value) }
-                    .onChange(of: value) { _, newValue in onChange(newValue) }
+                    .onSubmit {
+                        onChange(value)
+                    }
+                    .onChange(of: value) { _, newValue in
+                        onChange(newValue)
+                    }
             }
         }
         .onChange(of: parameter.value) { _, newValue in
-            if value != newValue { value = newValue }
+            if value != newValue {
+                value = newValue
+            }
         }
     }
 }
 
 private struct SettingsView: View {
+    @EnvironmentObject private var store: WorkflowStore
     @Environment(\.dismiss) private var dismiss
     @Binding var serverURL: String
-    let onDone: () -> Void
+
+    @State private var showingImporter = false
+    @State private var checking = false
+    @State private var serverOnline = false
+    @State private var connectionMessage = "Не проверено"
+    @State private var alertTitle = ""
+    @State private var alertMessage = ""
+    @State private var showingAlert = false
 
     var body: some View {
         NavigationStack {
             Form {
-                Section("Адрес ComfyUI") {
-                    TextField("192.168.1.25:8188", text: $serverURL)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .keyboardType(.URL)
-
-                    Text("Можно написать только IP:порт. Приложение само добавит http://. Для доступа вне дома используй Tailscale IP.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Section("На ПК") {
-                    Text("ComfyUI должен слушать сеть, например: python main.py --listen 0.0.0.0 --port 8188")
-                        .font(.caption)
-                        .textSelection(.enabled)
-                }
+                comfySection
+                workflowSection
             }
-            .navigationTitle("Подключение")
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Сохранить и проверить") {
-                        dismiss()
-                        onDone()
-                    }
-                }
-            }
-        }
-    }
-}
-
-private struct EditorScreen: View {
-    @EnvironmentObject private var store: WorkflowStore
-    @Environment(\.dismiss) private var dismiss
-    let serverURL: String
-    let item: WorkflowItem
-    @State private var message = "Открываю ComfyUI…"
-
-    var body: some View {
-        NavigationStack {
-            ComfyEditorView(
-                serverURL: serverURL,
-                item: item,
-                onSync: { workflow, output in
-                    store.updateFromEditor(workflow: workflow, output: output)
-                    message = "Синхронизировано"
-                },
-                onStatus: { message = $0 }
-            )
-            .ignoresSafeArea(edges: .bottom)
-            .navigationTitle("ComfyUI Editor")
+            .navigationTitle("Настройки")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Готово") { dismiss() }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Готово") {
+                        dismiss()
+                    }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Text(message)
-                        .font(.caption2)
+            }
+            .sheet(isPresented: $showingImporter) {
+                WorkflowDocumentPicker(
+                    onPick: { url in
+                        showingImporter = false
+                        importFile(url)
+                    },
+                    onCancel: {
+                        showingImporter = false
+                    }
+                )
+                .ignoresSafeArea()
+            }
+            .alert(alertTitle, isPresented: $showingAlert) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(alertMessage)
+            }
+        }
+    }
+
+    private var comfySection: some View {
+        Section("ComfyUI") {
+            TextField("192.168.1.25:8188", text: $serverURL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .keyboardType(.URL)
+
+            HStack {
+                Circle()
+                    .fill(serverOnline ? .green : .red)
+                    .frame(width: 9, height: 9)
+
+                Text(connectionMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                if checking {
+                    ProgressView()
+                } else {
+                    Button("Проверить") {
+                        Task { await checkServer() }
+                    }
+                }
+            }
+
+            Button {
+                openComfyInBrowser()
+            } label: {
+                Label("Открыть ComfyUI в Safari", systemImage: "safari")
+            }
+
+            Text("ComfyUI на ПК должен быть запущен с --listen 0.0.0.0 --port 8188")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+        }
+    }
+
+    private var workflowSection: some View {
+        Section("Workflow") {
+            if store.workflows.isEmpty {
+                Text("Workflow пока не добавлены")
+                    .foregroundStyle(.secondary)
+            } else {
+                Picker("Выбранный workflow", selection: Binding(
+                    get: { store.selectedID ?? store.workflows.first!.id },
+                    set: { store.select($0) }
+                )) {
+                    ForEach(store.workflows) { item in
+                        Text(item.name).tag(item.id)
+                    }
+                }
+
+                if let item = store.selected {
+                    Text(item.name)
+                        .font(.caption)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+
+                    Button(role: .destructive) {
+                        store.delete(item)
+                    } label: {
+                        Label("Удалить выбранный workflow", systemImage: "trash")
+                    }
+                }
+            }
+
+            Button {
+                showingImporter = true
+            } label: {
+                Label("Импорт JSON из «Файлы»", systemImage: "folder.badge.plus")
+            }
+        }
+    }
+
+    private func openComfyInBrowser() {
+        guard let url = ComfyClient.normalizedBaseURL(serverURL) else {
+            alertTitle = "Неверный адрес"
+            alertMessage = "Пример: 192.168.1.25:8188 или 100.x.x.x:8188"
+            showingAlert = true
+            return
+        }
+
+        UIApplication.shared.open(url, options: [:]) { success in
+            if !success {
+                Task { @MainActor in
+                    alertTitle = "Ошибка"
+                    alertMessage = "Safari не смог открыть адрес ComfyUI"
+                    showingAlert = true
                 }
             }
         }
     }
-}
 
-private struct ServerBrowserScreen: View {
-    @Environment(\.dismiss) private var dismiss
-    let serverURL: String
+    @MainActor
+    private func checkServer() async {
+        checking = true
+        connectionMessage = "Проверяю…"
 
-    var body: some View {
-        NavigationStack {
-            SimpleComfyBrowser(serverURL: serverURL)
-                .ignoresSafeArea(edges: .bottom)
-                .navigationTitle("Проверка ComfyUI")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button("Готово") { dismiss() }
-                    }
-                }
+        let result = await ComfyClient.check(base: serverURL)
+        serverOnline = result.online
+        connectionMessage = result.message
+
+        if let normalized = result.normalizedURL {
+            serverURL = normalized
+        }
+
+        checking = false
+    }
+
+    private func importFile(_ url: URL) {
+        do {
+            let data = try Data(contentsOf: url)
+            guard !data.isEmpty else {
+                throw NSError(
+                    domain: "ComfyMobile",
+                    code: 2,
+                    userInfo: [NSLocalizedDescriptionKey: "Выбранный файл пустой"]
+                )
+            }
+
+            try store.importJSON(
+                data: data,
+                suggestedName: url.deletingPathExtension().lastPathComponent
+            )
+
+            alertTitle = "Workflow импортирован"
+            alertMessage = url.lastPathComponent
+            showingAlert = true
+        } catch {
+            alertTitle = "Не удалось импортировать"
+            alertMessage = error.localizedDescription
+            showingAlert = true
         }
     }
 }
