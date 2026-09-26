@@ -1,0 +1,79 @@
+name: Build Comfy Mobile IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "MobileComfy/**"
+      - ".github/workflows/build-comfy-mobile.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-ios:
+    name: Build unsigned IPA
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: MobileComfy
+        run: |
+          set -euo pipefail
+          xcodegen generate
+          xcodebuild -project ComfyMobile.xcodeproj -scheme ComfyMobile -showBuildSettings >/dev/null
+
+      - name: Build iPhone app
+        working-directory: MobileComfy
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project ComfyMobile.xcodeproj \
+            -scheme ComfyMobile \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath "$GITHUB_WORKSPACE/MobileComfy/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            clean build
+
+      - name: Package IPA
+        working-directory: MobileComfy
+        run: |
+          set -euo pipefail
+          APP_PATH="$(find DerivedData/Build/Products/Release-iphoneos -maxdepth 1 -type d -name 'ComfyMobile.app' -print -quit)"
+          test -n "$APP_PATH"
+          rm -rf Payload ComfyMobile-v1.0.ipa
+          mkdir Payload
+          cp -R "$APP_PATH" Payload/ComfyMobile.app
+          /usr/bin/zip -qry ComfyMobile-v1.0.ipa Payload
+          test -s ComfyMobile-v1.0.ipa
+          ls -lh ComfyMobile-v1.0.ipa
+
+      - name: Verify IPA
+        working-directory: MobileComfy
+        run: |
+          set -euo pipefail
+          rm -rf ipa-check
+          mkdir ipa-check
+          unzip -q ComfyMobile-v1.0.ipa -d ipa-check
+          test -f ipa-check/Payload/ComfyMobile.app/Info.plist
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" ipa-check/Payload/ComfyMobile.app/Info.plist
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" ipa-check/Payload/ComfyMobile.app/Info.plist
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ComfyMobile-IPA
+          path: MobileComfy/ComfyMobile-v1.0.ipa
+          if-no-files-found: error
+          retention-days: 30
