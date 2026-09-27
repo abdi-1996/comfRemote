@@ -52,12 +52,12 @@ jobs:
           set -euo pipefail
           APP_PATH="$(find DerivedData/Build/Products/Release-iphoneos -maxdepth 1 -type d -name 'ComfyMobile.app' -print -quit)"
           test -n "$APP_PATH"
-          rm -rf Payload ComfyMobile-v1.0.3.ipa
+          rm -rf Payload ComfyMobile-v1.0.4.ipa
           mkdir Payload
           cp -R "$APP_PATH" Payload/ComfyMobile.app
-          /usr/bin/zip -qry ComfyMobile-v1.0.3.ipa Payload
-          test -s ComfyMobile-v1.0.3.ipa
-          ls -lh ComfyMobile-v1.0.3.ipa
+          /usr/bin/zip -qry ComfyMobile-v1.0.4.ipa Payload
+          test -s ComfyMobile-v1.0.4.ipa
+          ls -lh ComfyMobile-v1.0.4.ipa
 
       - name: Verify IPA
         working-directory: MobileComfy
@@ -65,7 +65,7 @@ jobs:
           set -euo pipefail
           rm -rf ipa-check
           mkdir ipa-check
-          unzip -q ComfyMobile-v1.0.3.ipa -d ipa-check
+          unzip -q ComfyMobile-v1.0.4.ipa -d ipa-check
           test -f ipa-check/Payload/ComfyMobile.app/Info.plist
           /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" ipa-check/Payload/ComfyMobile.app/Info.plist
           /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" ipa-check/Payload/ComfyMobile.app/Info.plist
@@ -74,6 +74,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ComfyMobile-IPA
-          path: MobileComfy/ComfyMobile-v1.0.3.ipa
+          path: MobileComfy/ComfyMobile-v1.0.4.ipa
           if-no-files-found: error
           retention-days: 30
