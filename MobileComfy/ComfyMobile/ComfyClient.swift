@@ -146,6 +146,106 @@ struct ComfyClient {
         return promptID
     }
 
+    static func generationFinished(base: String, promptID: String) async throws -> Bool {
+        guard let root = normalizedBaseURL(base) else {
+            throw ComfyClientError.badURL
+        }
+
+        let url = root
+            .appendingPathComponent("history")
+            .appendingPathComponent(promptID)
+
+        let response = try await request(
+            url: url,
+            method: "GET",
+            headers: ["Accept": "application/json"],
+            body: nil,
+            timeout: 8
+        )
+
+        guard (200..<300).contains(response.statusCode) else {
+            return false
+        }
+
+        guard let json = try? JSONSerialization.jsonObject(with: response.body) as? [String: Any] else {
+            return false
+        }
+
+        return json[promptID] != nil
+    }
+
+    static func uploadInput(
+        base: String,
+        data: Data,
+        fileName: String,
+        mimeType: String
+    ) async throws -> String {
+        guard let root = normalizedBaseURL(base) else {
+            throw ComfyClientError.badURL
+        }
+
+        let boundary = "ComfyMobileBoundary-" + UUID().uuidString
+        var body = Data()
+
+        func append(_ string: String) {
+            if let chunk = string.data(using: .utf8) {
+                body.append(chunk)
+            }
+        }
+
+        append("--\(boundary)\r\n")
+        append("Content-Disposition: form-data; name=\"image\"; filename=\"\(fileName)\"\r\n")
+        append("Content-Type: \(mimeType)\r\n\r\n")
+        body.append(data)
+        append("\r\n")
+
+        append("--\(boundary)\r\n")
+        append("Content-Disposition: form-data; name=\"type\"\r\n\r\n")
+        append("input\r\n")
+
+        append("--\(boundary)\r\n")
+        append("Content-Disposition: form-data; name=\"overwrite\"\r\n\r\n")
+        append("true\r\n")
+
+        append("--\(boundary)--\r\n")
+
+        let endpoints = ["upload/image", "api/upload/image"]
+        var lastError = "Не удалось загрузить материал"
+
+        for endpoint in endpoints {
+            let url = root.appendingPathComponent(endpoint)
+            let response = try await request(
+                url: url,
+                method: "POST",
+                headers: [
+                    "Content-Type": "multipart/form-data; boundary=\(boundary)",
+                    "Accept": "application/json"
+                ],
+                body: body,
+                timeout: 120
+            )
+
+            if (200..<300).contains(response.statusCode) {
+                guard let json = try? JSONSerialization.jsonObject(with: response.body) as? [String: Any],
+                      let name = json["name"] as? String else {
+                    return fileName
+                }
+
+                let subfolder = json["subfolder"] as? String ?? ""
+                return subfolder.isEmpty ? name : subfolder + "/" + name
+            }
+
+            lastError = String(data: response.body, encoding: .utf8)
+                ?? "HTTP \(response.statusCode)"
+
+            if response.statusCode != 404 {
+                break
+            }
+        }
+
+        throw ComfyClientError.server(lastError)
+    }
+
     private static func request(
         url: URL,
         method: String,
@@ -167,10 +267,12 @@ struct ComfyClient {
         req.httpMethod = method
         req.timeoutInterval = timeout
         req.cachePolicy = .reloadIgnoringLocalCacheData
-        req.setValue("ComfyMobile/1.0.3", forHTTPHeaderField: "User-Agent")
+        req.setValue("ComfyMobile/1.0.4", forHTTPHeaderField: "User-Agent")
+
         for (key, value) in headers {
             req.setValue(value, forHTTPHeaderField: key)
         }
+
         req.httpBody = body
 
         do {
@@ -207,9 +309,12 @@ struct ComfyClient {
 
         var allHeaders = headers
         let defaultPortValue = defaultPort(for: url) ?? 80
-        allHeaders["Host"] = portValue == defaultPortValue ? hostString : "\(hostString):\(portValue)"
+        allHeaders["Host"] = portValue == defaultPortValue
+            ? hostString
+            : "\(hostString):\(portValue)"
         allHeaders["Connection"] = "close"
-        allHeaders["User-Agent"] = "ComfyMobile/1.0.3"
+        allHeaders["User-Agent"] = "ComfyMobile/1.0.4"
+
         if let body {
             allHeaders["Content-Length"] = String(body.count)
         }
@@ -225,6 +330,7 @@ struct ComfyClient {
         guard var requestData = requestText.data(using: .utf8) else {
             throw ComfyClientError.badRequestFallback
         }
+
         if let body {
             requestData.append(body)
         }
@@ -237,6 +343,7 @@ struct ComfyClient {
             func finish(_ result: Result<RawHTTPResponse, Error>) {
                 lock.lock()
                 defer { lock.unlock() }
+
                 guard !finished else { return }
                 finished = true
                 connection.cancel()
@@ -245,7 +352,10 @@ struct ComfyClient {
 
             func tryComplete(isStreamComplete: Bool) -> Bool {
                 do {
-                    if let parsed = try parseHTTPResponse(received, streamComplete: isStreamComplete) {
+                    if let parsed = try parseHTTPResponse(
+                        received,
+                        streamComplete: isStreamComplete
+                    ) {
                         finish(.success(parsed))
                         return true
                     }
@@ -253,17 +363,25 @@ struct ComfyClient {
                     finish(.failure(error))
                     return true
                 }
+
                 return false
             }
 
             func receiveNext() {
-                connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { data, _, isComplete, error in
+                connection.receive(
+                    minimumIncompleteLength: 1,
+                    maximumLength: 1_048_576
+                ) { data, _, isComplete, error in
                     if let data {
                         received.append(data)
                     }
 
                     if let error {
-                        finish(.failure(ComfyClientError.network(networkMessage(error))))
+                        finish(
+                            .failure(
+                                ComfyClientError.network(networkMessage(error))
+                            )
+                        )
                         return
                     }
 
@@ -283,17 +401,31 @@ struct ComfyClient {
             connection.stateUpdateHandler = { state in
                 switch state {
                 case .ready:
-                    connection.send(content: requestData, completion: .contentProcessed { error in
-                        if let error {
-                            finish(.failure(ComfyClientError.network(networkMessage(error))))
-                        } else {
-                            receiveNext()
+                    connection.send(
+                        content: requestData,
+                        completion: .contentProcessed { error in
+                            if let error {
+                                finish(
+                                    .failure(
+                                        ComfyClientError.network(networkMessage(error))
+                                    )
+                                )
+                            } else {
+                                receiveNext()
+                            }
                         }
-                    })
+                    )
+
                 case .failed(let error):
-                    finish(.failure(ComfyClientError.network(networkMessage(error))))
+                    finish(
+                        .failure(
+                            ComfyClientError.network(networkMessage(error))
+                        )
+                    )
+
                 case .cancelled:
                     break
+
                 default:
                     break
                 }
@@ -301,38 +433,60 @@ struct ComfyClient {
 
             connection.start(queue: DispatchQueue.global(qos: .userInitiated))
 
-            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + timeout) {
-                finish(.failure(ComfyClientError.network("Тайм-аут: iPhone не получил ответ от ComfyUI")))
-            }
+            DispatchQueue.global(qos: .userInitiated)
+                .asyncAfter(deadline: .now() + timeout) {
+                    finish(
+                        .failure(
+                            ComfyClientError.network(
+                                "Тайм-аут: iPhone не получил ответ от ComfyUI"
+                            )
+                        )
+                    )
+                }
         }
     }
 
-    private static func parseHTTPResponse(_ data: Data, streamComplete: Bool) throws -> RawHTTPResponse? {
+    private static func parseHTTPResponse(
+        _ data: Data,
+        streamComplete: Bool
+    ) throws -> RawHTTPResponse? {
         let separator = Data([13, 10, 13, 10])
+
         guard let headerRange = data.range(of: separator) else {
-            return streamComplete ? nil : nil
+            return nil
         }
 
         let headerData = data.subdata(in: 0..<headerRange.lowerBound)
+
         guard let headerText = String(data: headerData, encoding: .utf8) else {
             throw ComfyClientError.badResponse
         }
 
         let lines = headerText.components(separatedBy: "\r\n")
+
         guard let statusLine = lines.first else {
             throw ComfyClientError.badResponse
         }
 
         let statusParts = statusLine.split(separator: " ")
-        guard statusParts.count >= 2, let statusCode = Int(statusParts[1]) else {
+
+        guard statusParts.count >= 2,
+              let statusCode = Int(statusParts[1]) else {
             throw ComfyClientError.badResponse
         }
 
         var parsedHeaders: [String: String] = [:]
+
         for line in lines.dropFirst() {
             guard let colon = line.firstIndex(of: ":") else { continue }
-            let key = line[..<colon].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            let value = line[line.index(after: colon)...].trimmingCharacters(in: .whitespacesAndNewlines)
+
+            let key = line[..<colon]
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+
+            let value = line[line.index(after: colon)...]
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
             parsedHeaders[key] = value
         }
 
@@ -342,18 +496,34 @@ struct ComfyClient {
         if let lengthText = parsedHeaders["content-length"],
            let length = Int(lengthText) {
             guard rawBody.count >= length else { return nil }
-            return RawHTTPResponse(statusCode: statusCode, body: rawBody.prefix(length))
+
+            return RawHTTPResponse(
+                statusCode: statusCode,
+                body: Data(rawBody.prefix(length))
+            )
         }
 
-        if parsedHeaders["transfer-encoding"]?.lowercased().contains("chunked") == true {
+        if parsedHeaders["transfer-encoding"]?
+            .lowercased()
+            .contains("chunked") == true {
+
             if let decoded = decodeChunkedBody(rawBody) {
-                return RawHTTPResponse(statusCode: statusCode, body: decoded)
+                return RawHTTPResponse(
+                    statusCode: statusCode,
+                    body: decoded
+                )
             }
-            return streamComplete ? RawHTTPResponse(statusCode: statusCode, body: rawBody) : nil
+
+            return streamComplete
+                ? RawHTTPResponse(statusCode: statusCode, body: rawBody)
+                : nil
         }
 
         if streamComplete {
-            return RawHTTPResponse(statusCode: statusCode, body: rawBody)
+            return RawHTTPResponse(
+                statusCode: statusCode,
+                body: rawBody
+            )
         }
 
         return nil
@@ -365,17 +535,29 @@ struct ComfyClient {
         let crlf = Data([13, 10])
 
         while cursor < data.endIndex {
-            guard let lineEnd = data.range(of: crlf, options: [], in: cursor..<data.endIndex) else {
+            guard let lineEnd = data.range(
+                of: crlf,
+                options: [],
+                in: cursor..<data.endIndex
+            ) else {
                 return nil
             }
 
             let lineData = data.subdata(in: cursor..<lineEnd.lowerBound)
+
             guard let line = String(data: lineData, encoding: .utf8) else {
                 return nil
             }
 
-            let sizeText = line.split(separator: ";", maxSplits: 1).first.map(String.init) ?? line
-            guard let size = Int(sizeText.trimmingCharacters(in: .whitespacesAndNewlines), radix: 16) else {
+            let sizeText = line
+                .split(separator: ";", maxSplits: 1)
+                .first
+                .map(String.init) ?? line
+
+            guard let size = Int(
+                sizeText.trimmingCharacters(in: .whitespacesAndNewlines),
+                radix: 16
+            ) else {
                 return nil
             }
 
@@ -393,6 +575,7 @@ struct ComfyClient {
             output.append(data.subdata(in: cursor..<chunkEnd))
 
             let suffixEnd = data.index(chunkEnd, offsetBy: 2)
+
             guard data.subdata(in: chunkEnd..<suffixEnd) == crlf else {
                 return nil
             }
@@ -405,9 +588,12 @@ struct ComfyClient {
 
     private static func defaultPort(for url: URL) -> Int? {
         switch url.scheme?.lowercased() {
-        case "http": return 80
-        case "https": return 443
-        default: return nil
+        case "http":
+            return 80
+        case "https":
+            return 443
+        default:
+            return nil
         }
     }
 
@@ -424,10 +610,13 @@ struct ComfyClient {
             default:
                 return "Ошибка сети: \(code.rawValue)"
             }
+
         case .dns:
             return "Не удалось найти адрес ComfyUI."
+
         case .tls:
             return "Ошибка TLS-соединения."
+
         @unknown default:
             return "Не удалось подключиться к ComfyUI."
         }
