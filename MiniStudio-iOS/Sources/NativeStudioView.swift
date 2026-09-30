@@ -6,7 +6,7 @@ import AVKit
 
 private enum MiniStudioPanel: String, CaseIterable, Identifiable {
     case references = "References"
-    case quick = "Quick"
+    case models = "Models & LoRAs"\n    case workflows = "Workflows"
     case generation = "Generation"
     case settings = "Settings"
 
@@ -15,7 +15,7 @@ private enum MiniStudioPanel: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .references: return "photo.on.rectangle.angled"
-        case .quick: return "slider.horizontal.3"
+        case .models: return "square.stack.3d.up"\n        case .workflows: return "point.3.connected.trianglepath.dotted"
         case .generation: return "sparkles"
         case .settings: return "gearshape"
         }
