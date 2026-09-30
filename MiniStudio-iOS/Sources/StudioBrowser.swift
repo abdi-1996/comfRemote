@@ -90,6 +90,26 @@ final class StudioBrowser: NSObject, ObservableObject, WKNavigationDelegate, WKU
         }
     }
 
+    func editWorkflow() {
+        guard connected, isServer(webView.url), !opening else { return }
+        opening = true
+        Task {
+            defer { opening = false }
+            do {
+                let result = try await bridge("edit")
+                if result == "ready" {
+                    status = "ComfyUI Workflow"
+                    message = ""
+                } else if result == "no-studio" {
+                    status = "ComfyUI Workflow"
+                    message = ""
+                }
+            } catch {
+                message = "Не удалось переключиться в редактор workflow."
+            }
+        }
+    }
+
     func resume() {
         guard connected, !loading, isServer(webView.url) else { return }
         Task {
