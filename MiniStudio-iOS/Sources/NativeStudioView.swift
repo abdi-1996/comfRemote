@@ -4,6 +4,10 @@ import PhotosUI
 import UniformTypeIdentifiers
 import AVKit
 
+private extension Color {
+    static let miniStudioAccent = Color(red: 197.0/255.0, green: 242.0/255.0, blue: 119.0/255.0)
+}
+
 private enum MiniStudioPanel: String, CaseIterable, Identifiable {
     case references = "References"
     case models = "Models & LoRAs"
@@ -67,7 +71,7 @@ struct NativeStudioView: View {
                 if busy {
                     ProgressView(value: progress, total: 1)
                         .progressViewStyle(.linear)
-                        .tint(.mint)
+                        .tint(.miniStudioAccent)
                         .frame(height: 2)
                 }
             }
@@ -112,7 +116,7 @@ struct NativeStudioView: View {
                 referencePreviews.removeAll()
             }
         }
-        .tint(.mint)
+        .tint(.miniStudioAccent)
         .preferredColorScheme(.dark)
     }
 
@@ -123,7 +127,7 @@ struct NativeStudioView: View {
                     .fill(
                         LinearGradient(
                             colors: [
-                                Color.mint.opacity(0.30),
+                                Color.miniStudioAccent.opacity(0.30),
                                 Color.cyan.opacity(0.10)
                             ],
                             startPoint: .topLeading,
@@ -134,7 +138,7 @@ struct NativeStudioView: View {
 
                 Image(systemName: "sparkles.rectangle.stack.fill")
                     .font(.title3.bold())
-                    .foregroundStyle(.mint)
+                    .foregroundStyle(.miniStudioAccent)
             }
 
             VStack(alignment: .leading, spacing: 3) {
@@ -204,7 +208,7 @@ struct NativeStudioView: View {
                         .padding(.horizontal, 12)
                         .padding(.vertical, 9)
                         .background(
-                            panel == item ? Color.mint : Color.white.opacity(0.06),
+                            panel == item ? Color.miniStudioAccent : Color.white.opacity(0.06),
                             in: Capsule()
                         )
                     }
@@ -633,7 +637,7 @@ struct NativeStudioView: View {
                     VStack(spacing: 10) {
                         Image(systemName: "play.rectangle.on.rectangle")
                             .font(.system(size: 42))
-                            .foregroundStyle(.mint.opacity(0.8))
+                            .foregroundStyle(.miniStudioAccent.opacity(0.8))
 
                         Text("Здесь появится результат")
                             .font(.subheadline.bold())
@@ -648,7 +652,7 @@ struct NativeStudioView: View {
             if busy {
                 VStack(spacing: 8) {
                     ProgressView(value: progress, total: 1)
-                        .tint(.mint)
+                        .tint(.miniStudioAccent)
 
                     HStack {
                         Text(statusText)
@@ -707,7 +711,7 @@ struct NativeStudioView: View {
                 .frame(height: 52)
             }
             .buttonStyle(.borderedProminent)
-            .tint(.mint)
+            .tint(.miniStudioAccent)
             .foregroundStyle(.black)
             .disabled(busy || store.selected?.apiPromptJSON == nil || !serverOnline)
 
@@ -980,7 +984,7 @@ struct NativeStudioView: View {
         VStack(spacing: 14) {
             Image(systemName: "point.3.connected.trianglepath.dotted")
                 .font(.system(size: 48))
-                .foregroundStyle(.mint)
+                .foregroundStyle(.miniStudioAccent)
 
             Text("Добавь workflow")
                 .font(.title3.bold())
@@ -1600,7 +1604,7 @@ private struct MiniStudioReferenceSlot: View {
                         .foregroundStyle(
                             material == nil
                                 ? Color.secondary
-                                : Color.mint
+                                : Color.miniStudioAccent
                         )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
@@ -1663,7 +1667,7 @@ private struct MiniStudioReferenceSlot: View {
                     material == nil
                         ? Color.secondary
                         : enabled
-                            ? Color.mint
+                            ? Color.miniStudioAccent
                             : Color.secondary
                 )
 
@@ -1685,7 +1689,7 @@ private struct MiniStudioReferenceSlot: View {
             RoundedRectangle(cornerRadius: 19)
                 .stroke(
                     material != nil && enabled
-                        ? Color.mint.opacity(0.18)
+                        ? Color.miniStudioAccent.opacity(0.18)
                         : Color.white.opacity(0.05),
                     lineWidth: 1
                 )
@@ -1774,7 +1778,7 @@ private struct SummaryTile: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             Image(systemName: icon)
-                .foregroundStyle(.mint)
+                .foregroundStyle(.miniStudioAccent)
 
             Text(value)
                 .font(.subheadline.bold())
@@ -1819,7 +1823,7 @@ private struct MiniStudioResolutionEditor: View {
                         }
                         .font(.caption.bold())
                         .buttonStyle(.bordered)
-                        .tint(ratio == item ? .mint : .secondary)
+                        .tint(ratio == item ? .miniStudioAccent : .secondary)
                     }
                 }
             }
@@ -2079,7 +2083,7 @@ private struct LatestResultPreview: View {
                 VStack(spacing: 10) {
                     Image(systemName: "play.circle.fill")
                         .font(.system(size: 52))
-                        .foregroundStyle(.mint)
+                        .foregroundStyle(.miniStudioAccent)
 
                     Text(result.url.lastPathComponent)
                         .font(.caption)
@@ -2091,7 +2095,7 @@ private struct LatestResultPreview: View {
                 VStack(spacing: 10) {
                     Image(systemName: "waveform.circle.fill")
                         .font(.system(size: 52))
-                        .foregroundStyle(.mint)
+                        .foregroundStyle(.miniStudioAccent)
 
                     Text(result.url.lastPathComponent)
                         .font(.caption)
@@ -2103,7 +2107,7 @@ private struct LatestResultPreview: View {
                 VStack(spacing: 10) {
                     Image(systemName: "doc.circle.fill")
                         .font(.system(size: 52))
-                        .foregroundStyle(.mint)
+                        .foregroundStyle(.miniStudioAccent)
 
                     Text(result.url.lastPathComponent)
                         .font(.caption)
@@ -2138,7 +2142,7 @@ private struct ResultCompactTile: View {
             } else {
                 Image(systemName: icon)
                     .font(.system(size: 34))
-                    .foregroundStyle(.mint)
+                    .foregroundStyle(.miniStudioAccent)
             }
 
             if result.kind == .video {
@@ -2206,7 +2210,7 @@ private struct ResultDetailView: View {
                     VStack(spacing: 18) {
                         Image(systemName: "waveform.circle.fill")
                             .font(.system(size: 86))
-                            .foregroundStyle(.mint)
+                            .foregroundStyle(.miniStudioAccent)
 
                         Button {
                             toggleAudio()
@@ -2221,7 +2225,7 @@ private struct ResultDetailView: View {
                             .frame(height: 46)
                         }
                         .buttonStyle(.borderedProminent)
-                        .tint(.mint)
+                        .tint(.miniStudioAccent)
                         .foregroundStyle(.black)
                         .padding(.horizontal, 28)
                     }
@@ -2230,7 +2234,7 @@ private struct ResultDetailView: View {
                     VStack(spacing: 16) {
                         Image(systemName: "doc.circle.fill")
                             .font(.system(size: 86))
-                            .foregroundStyle(.mint)
+                            .foregroundStyle(.miniStudioAccent)
 
                         Text(result.url.lastPathComponent)
                             .font(.headline)
@@ -2252,7 +2256,7 @@ private struct ResultDetailView: View {
                     .frame(height: 48)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(.mint)
+                .tint(.miniStudioAccent)
                 .foregroundStyle(.black)
                 .padding(.horizontal)
 
