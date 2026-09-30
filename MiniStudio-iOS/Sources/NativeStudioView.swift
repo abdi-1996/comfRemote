@@ -30,6 +30,8 @@ private struct LocalStudioResult: Identifiable, Hashable {
 
 struct NativeStudioView: View {
     @EnvironmentObject private var store: WorkflowStore
+    @Environment(\.openURL) private var openURL
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("comfyServerURL") private var serverURL = ""
 
     @State private var panel: MiniStudioPanel = .generation
@@ -46,6 +48,8 @@ struct NativeStudioView: View {
     @State private var showingImporter = false
     @State private var expandedNodeIDs: Set<String> = []
     @State private var checkingServer = false
+    @State private var syncing = false
+    @State private var lastHistoryPromptID = ""
 
     var body: some View {
         NavigationStack {
@@ -88,7 +92,18 @@ struct NativeStudioView: View {
             }
             .onAppear {
                 loadSavedResults()
-                Task { await refreshConnection() }
+                Task {
+                    await refreshConnection()
+                    await syncWithComfyUI()
+                }
+            }
+            .onChange(of: scenePhase) { phase in
+                if phase == .active {
+                    Task {
+                        await refreshConnection()
+                        await syncWithComfyUI()
+                    }
+                }
             }
             .onChange(of: store.selectedID) { _ in
                 disabledReferenceNodeIDs.removeAll()
@@ -741,7 +756,27 @@ struct NativeStudioView: View {
                 }
             }
 
-            Text("ComfyUI остаётся только backend. Его веб-интерфейс приложению не нужен.")
+            HStack(spacing: 10) {
+                Button {
+                    Task { await syncWithComfyUI(forceWorkflow: true) }
+                } label: {
+                    Label(syncing ? "Синхронизация…" : "Синхронизировать", systemImage: "arrow.triangle.2.circlepath")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .disabled(syncing || !serverOnline)
+
+                Button {
+                    openComfyUIEditor()
+                } label: {
+                    Label("Редактировать", systemImage: "pencil.and.outline")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!serverOnline)
+            }
+
+            Text("Редактировать открывает настоящий ComfyUI. После возврата приложение снова читает history и последний API workflow, поэтому изменения и результаты появляются в Mini Studio.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
@@ -1168,6 +1203,56 @@ struct NativeStudioView: View {
         }
 
         checkingServer = false
+    }
+
+    @MainActor
+    private func syncWithComfyUI(forceWorkflow: Bool = false) async {
+        guard serverOnline, !serverURL.isEmpty, !syncing else { return }
+        syncing = true
+        defer { syncing = false }
+
+        do {
+            let history = try await ComfyClient.recentHistory(base: serverURL, maxItems: 30)
+
+            if let latest = history.first {
+                if forceWorkflow || latest.promptID != lastHistoryPromptID {
+                    if !latest.prompt.isEmpty {
+                        store.syncPromptFromComfyUI(latest.prompt)
+                    }
+                    lastHistoryPromptID = latest.promptID
+                }
+            }
+
+            let knownPaths = Set(results.map { $0.url.lastPathComponent })
+            var newFiles: [ComfyOutputFile] = []
+            for entry in history {
+                for file in entry.files where !knownPaths.contains(file.filename) {
+                    if !newFiles.contains(file) {
+                        newFiles.append(file)
+                    }
+                }
+            }
+
+            if !newFiles.isEmpty {
+                let synced = try await saveResults(newFiles)
+                let existing = Set(results.map { $0.url.path })
+                results.insert(contentsOf: synced.filter { !existing.contains($0.url.path) }, at: 0)
+            }
+
+            statusText = history.isEmpty
+                ? "ComfyUI подключён · history пуст"
+                : "Синхронизировано с ComfyUI"
+        } catch {
+            statusText = "ComfyUI online · sync недоступен"
+        }
+    }
+
+    private func openComfyUIEditor() {
+        guard let url = ComfyClient.editorURL(base: serverURL) else {
+            showMessage("Неверный адрес ComfyUI")
+            return
+        }
+        openURL(url)
     }
 
     @MainActor
