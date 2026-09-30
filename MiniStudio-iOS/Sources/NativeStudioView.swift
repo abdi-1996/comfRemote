@@ -148,7 +148,21 @@ struct NativeStudioView: View {
             Spacer()
 
             Button {
-                Task { await refreshConnection() }
+                openComfyUIEditor()
+            } label: {
+                Image(systemName: "pencil")
+                    .font(.subheadline.bold())
+                    .frame(width: 36, height: 36)
+                    .background(Color.white.opacity(0.06), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!serverOnline)
+
+            Button {
+                Task {
+                    await refreshConnection()
+                    await syncWithComfyUI(forceWorkflow: true)
+                }
             } label: {
                 HStack(spacing: 6) {
                     Circle()
@@ -1217,7 +1231,7 @@ struct NativeStudioView: View {
             if let latest = history.first {
                 if forceWorkflow || latest.promptID != lastHistoryPromptID {
                     if !latest.prompt.isEmpty {
-                        store.syncPromptFromComfyUI(latest.prompt)
+                        store.replaceWithLivePrompt(latest.prompt)
                     }
                     lastHistoryPromptID = latest.promptID
                 }
@@ -1239,11 +1253,32 @@ struct NativeStudioView: View {
                 results.insert(contentsOf: synced.filter { !existing.contains($0.url.path) }, at: 0)
             }
 
+            await loadReferencePreviews()
+
             statusText = history.isEmpty
                 ? "ComfyUI подключён · history пуст"
-                : "Синхронизировано с ComfyUI"
+                : "Текущий workflow синхронизирован"
         } catch {
             statusText = "ComfyUI online · sync недоступен"
+        }
+    }
+
+    @MainActor
+    private func loadReferencePreviews() async {
+        guard let item = store.selected else { return }
+        let materials = store.materials(for: item)
+
+        for material in materials where material.kind == .image {
+            guard pictureIndex(material.nodeTitle) != nil,
+                  !material.currentValue.isEmpty,
+                  referencePreviews[material.id] == nil else { continue }
+
+            if let data = try? await ComfyClient.inputData(
+                base: serverURL,
+                remoteName: material.currentValue
+            ), let image = UIImage(data: data) {
+                referencePreviews[material.id] = image
+            }
         }
     }
 
