@@ -467,48 +467,8 @@ struct NativeStudioView: View {
         if width != nil || height != nil || length != nil {
             studioCard(title: "Format", icon: "rectangle.ratio.16.to.9") {
                 if let width, let height {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Aspect ratio")
-                            .font(.caption.bold())
-                            .foregroundStyle(.secondary)
-
-                        HStack(spacing: 8) {
-                            formatButton("16:9") {
-                                setParameter(width, "832")
-                                setParameter(height, "480")
-                            }
-                            formatButton("9:16") {
-                                setParameter(width, "480")
-                                setParameter(height, "832")
-                            }
-                            formatButton("1:1") {
-                                setParameter(width, "768")
-                                setParameter(height, "768")
-                            }
-                        }
-
-                        HStack(spacing: 10) {
-                            labeledParameter("Width px", parameter: width)
-                            labeledParameter("Height px", parameter: height)
-                        }
-
-                        Text("Video resolution · pixels")
-                            .font(.caption.bold())
-                            .foregroundStyle(.secondary)
-                            .padding(.top, 4)
-
-                        HStack(spacing: 8) {
-                            formatButton("480p") {
-                                setVideoResolution(width: width, height: height, shortSide: 480)
-                            }
-                            formatButton("720p") {
-                                setVideoResolution(width: width, height: height, shortSide: 720)
-                            }
-                            formatButton("1080p") {
-                                setVideoResolution(width: width, height: height, shortSide: 1080)
-                            }
-                        }
-                    }
+                    MiniStudioResolutionEditor(width: width, height: height, length: length)
+                        .environmentObject(store)
                 }
 
                 if let length {
@@ -1830,6 +1790,103 @@ private struct SummaryTile: View {
             Color.white.opacity(0.05),
             in: RoundedRectangle(cornerRadius: 15)
         )
+    }
+}
+
+private struct MiniStudioResolutionEditor: View {
+    @EnvironmentObject private var store: WorkflowStore
+    let width: WorkflowParameter
+    let height: WorkflowParameter
+    let length: WorkflowParameter?
+
+    @State private var ratio = "16:9"
+    @State private var megapixels = "0.400"
+
+    private let ratios = ["16:9","9:16","1:1","4:3","3:4","3:2","2:3","21:9"]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Aspect ratio")
+                .font(.caption.bold())
+                .foregroundStyle(.secondary)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 7) {
+                    ForEach(ratios, id: \.self) { item in
+                        Button(item) {
+                            ratio = item
+                            apply()
+                        }
+                        .font(.caption.bold())
+                        .buttonStyle(.bordered)
+                        .tint(ratio == item ? .mint : .secondary)
+                    }
+                }
+            }
+
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Megapixels")
+                        .font(.caption.bold())
+                        .foregroundStyle(.secondary)
+                    TextField("0.400", text: $megapixels)
+                        .keyboardType(.decimalPad)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { apply() }
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Pixels")
+                        .font(.caption.bold())
+                        .foregroundStyle(.secondary)
+                    Text("\(width.value) × \(height.value)")
+                        .font(.subheadline.monospacedDigit().bold())
+                        .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
+                }
+            }
+
+            let frames = length?.value ?? "—"
+            Text("\(width.value) × \(height.value) · \(currentMP) MP · \(frames) frames / 24 fps · H3 frame grid")
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .onAppear { syncFromParameters() }
+        .onChange(of: width.value) { _ in syncFromParameters() }
+        .onChange(of: height.value) { _ in syncFromParameters() }
+    }
+
+    private var currentMP: String {
+        let w = Double(width.value) ?? 0
+        let h = Double(height.value) ?? 0
+        return String(format: "%.3f", w * h / 1_000_000)
+    }
+
+    private func syncFromParameters() {
+        let w = Double(width.value) ?? 832
+        let h = Double(height.value) ?? 480
+        megapixels = String(format: "%.3f", w * h / 1_000_000)
+        ratio = ratios.min { a, b in
+            ratioDistance(a, w / max(h, 1)) < ratioDistance(b, w / max(h, 1))
+        } ?? "16:9"
+    }
+
+    private func ratioDistance(_ text: String, _ target: Double) -> Double {
+        let parts = text.split(separator: ":").compactMap { Double($0) }
+        guard parts.count == 2 else { return 999 }
+        return abs(parts[0] / parts[1] - target)
+    }
+
+    private func apply() {
+        let mp = min(max(Double(megapixels.replacingOccurrences(of: ",", with: ".")) ?? 0.4, 0.1), 8.0)
+        let parts = ratio.split(separator: ":").compactMap { Double($0) }
+        guard parts.count == 2 else { return }
+        let a = parts[0], b = parts[1]
+        let w = max(32, Int((sqrt(mp * 1_000_000 * a / b) / 32).rounded()) * 32)
+        let h = max(32, Int((sqrt(mp * 1_000_000 * b / a) / 32).rounded()) * 32)
+        store.setParameter(width, value: String(w))
+        store.setParameter(height, value: String(h))
+        megapixels = String(format: "%.3f", Double(w * h) / 1_000_000)
     }
 }
 
