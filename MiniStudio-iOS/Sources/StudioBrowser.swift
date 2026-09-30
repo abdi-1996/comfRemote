@@ -1,6 +1,12 @@
 import SwiftUI
 import WebKit
 
+struct SharedFile: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
+
 @MainActor
 final class StudioBrowser: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
     @Published var connected = false
