@@ -355,6 +355,12 @@ struct NativeStudioView: View {
 
                 if let item = store.selected {
                     generationPreview
+                    quickPromptCard(item)
+                    aspectAndDurationCard(item)
+                    seedCard(item)
+                    turboCard(item)
+                    previewCard(item)
+                    lastFrameCard(item)
                     generationSummary(item)
                     generationButtons
 
