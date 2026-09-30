@@ -362,17 +362,28 @@ struct NativeStudioView: View {
                 if let item = store.selected {
                     generationPreview
                     quickPromptCard(item)
-                    aspectAndDurationCard(item)
                     seedCard(item)
+                    generationButtons
+                } else {
+                    noWorkflowCard
+                }
+            }
+            .padding(16)
+            .padding(.bottom, 30)
+        }
+    }
+
+    private var controlsPanel: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                panelTitle("Controls", subtitle: "Параметры генерации Mini Studio")
+                if let item = store.selected {
+                    aspectAndDurationCard(item)
                     turboCard(item)
                     previewCard(item)
                     lastFrameCard(item)
-                    generationSummary(item)
-                    generationButtons
-
-                    if !results.isEmpty {
-                        recentResults
-                    }
+                    identityCard(item)
+                    extraQuickCard(item)
                 } else {
                     noWorkflowCard
                 }
