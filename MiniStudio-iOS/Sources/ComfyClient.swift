@@ -788,3 +788,107 @@ extension ComfyClient {
         return response.body
     }
 }
+
+
+struct ComfyHistoryEntry: @unchecked Sendable {
+    let promptID: String
+    let prompt: [String: Any]
+    let files: [ComfyOutputFile]
+    let timestamp: Double
+}
+
+extension ComfyClient {
+    static func recentHistory(base: String, maxItems: Int = 20) async throws -> [ComfyHistoryEntry] {
+        guard let root = normalizedBaseURL(base) else { throw ComfyClientError.badURL }
+        var components = URLComponents(url: root.appendingPathComponent("history"), resolvingAgainstBaseURL: false)
+        components?.queryItems = [URLQueryItem(name: "max_items", value: String(maxItems))]
+        guard let url = components?.url else { throw ComfyClientError.badURL }
+
+        let response = try await request(
+            url: url, method: "GET",
+            headers: ["Accept": "application/json"], body: nil, timeout: 15
+        )
+        guard (200..<300).contains(response.statusCode),
+              let json = try? JSONSerialization.jsonObject(with: response.body) as? [String: Any] else {
+            return []
+        }
+
+        var entries: [ComfyHistoryEntry] = []
+        for (promptID, value) in json {
+            guard let entry = value as? [String: Any] else { continue }
+            var promptObject: [String: Any] = [:]
+            var timestamp: Double = 0
+
+            if let rawPrompt = entry["prompt"] as? [Any] {
+                if rawPrompt.count > 2, let candidate = rawPrompt[2] as? [String: Any] {
+                    promptObject = candidate
+                }
+                if rawPrompt.count > 5, let extra = rawPrompt[5] as? [String: Any] {
+                    if let value = extra["timestamp"] as? NSNumber {
+                        timestamp = value.doubleValue
+                    } else if let value = extra["created_at"] as? NSNumber {
+                        timestamp = value.doubleValue
+                    }
+                }
+            } else if let candidate = entry["prompt"] as? [String: Any] {
+                promptObject = candidate
+            }
+
+            entries.append(
+                ComfyHistoryEntry(
+                    promptID: promptID,
+                    prompt: promptObject,
+                    files: outputFiles(fromHistoryEntry: entry),
+                    timestamp: timestamp
+                )
+            )
+        }
+
+        return entries.sorted {
+            if $0.timestamp == $1.timestamp { return $0.promptID > $1.promptID }
+            return $0.timestamp > $1.timestamp
+        }
+    }
+
+    static func latestWorkflowPrompt(base: String) async throws -> (promptID: String, prompt: [String: Any])? {
+        let history = try await recentHistory(base: base, maxItems: 30)
+        guard let latest = history.first(where: { !$0.prompt.isEmpty }) else { return nil }
+        return (latest.promptID, latest.prompt)
+    }
+
+    static func editorURL(base: String) -> URL? {
+        normalizedBaseURL(base)
+    }
+
+    private static func outputFiles(fromHistoryEntry entry: [String: Any]) -> [ComfyOutputFile] {
+        guard let outputs = entry["outputs"] as? [String: Any] else { return [] }
+        var found: [ComfyOutputFile] = []
+
+        func appendFile(_ dict: [String: Any]) {
+            guard let filename = dict["filename"] as? String, !filename.isEmpty else { return }
+            let subfolder = dict["subfolder"] as? String ?? ""
+            let type = dict["type"] as? String ?? "output"
+            let ext = (filename as NSString).pathExtension.lowercased()
+            let kind: ComfyOutputKind
+            if ["png", "jpg", "jpeg", "webp", "gif", "bmp"].contains(ext) { kind = .image }
+            else if ["mp4", "mov", "m4v", "webm", "mkv"].contains(ext) { kind = .video }
+            else if ["wav", "mp3", "m4a", "aac", "flac", "ogg"].contains(ext) { kind = .audio }
+            else { kind = .file }
+
+            let file = ComfyOutputFile(filename: filename, subfolder: subfolder, type: type, kind: kind)
+            if !found.contains(file) { found.append(file) }
+        }
+
+        for nodeValue in outputs.values {
+            guard let node = nodeValue as? [String: Any] else { continue }
+            for value in node.values {
+                if let array = value as? [[String: Any]] {
+                    for item in array { appendFile(item) }
+                } else if let dict = value as? [String: Any] {
+                    appendFile(dict)
+                }
+            }
+        }
+        return found
+    }
+}
