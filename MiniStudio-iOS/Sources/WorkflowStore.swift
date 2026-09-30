@@ -303,6 +303,55 @@ final class WorkflowStore: ObservableObject {
         })
     }
 
+    func studioParameters(
+        for item: WorkflowItem,
+        classContains: [String] = [],
+        titleContains: [String] = [],
+        keys: [String] = []
+    ) -> [WorkflowParameter] {
+        let classNeedles = classContains.map { $0.lowercased() }
+        let titleNeedles = titleContains.map { $0.lowercased() }
+        let keyNeedles = keys.map { $0.lowercased() }
+
+        return allParameters(for: item).filter { parameter in
+            let classText = parameter.classType.lowercased()
+            let titleText = parameter.nodeTitle.lowercased()
+            let keyText = parameter.key.lowercased()
+
+            let classMatch = classNeedles.isEmpty || classNeedles.contains(where: { classText.contains($0) })
+            let titleMatch = titleNeedles.isEmpty || titleNeedles.contains(where: { titleText.contains($0) })
+            let keyMatch = keyNeedles.isEmpty || keyNeedles.contains(where: {
+                keyText == $0 || keyText.contains($0)
+            })
+
+            return classMatch && titleMatch && keyMatch
+        }
+    }
+
+    func firstStudioParameter(
+        for item: WorkflowItem,
+        classContains: [String] = [],
+        titleContains: [String] = [],
+        keys: [String]
+    ) -> WorkflowParameter? {
+        let exactKeys = keys.map { $0.lowercased() }
+
+        let candidates = studioParameters(
+            for: item,
+            classContains: classContains,
+            titleContains: titleContains,
+            keys: keys
+        )
+
+        for key in exactKeys {
+            if let match = candidates.first(where: { $0.key.lowercased() == key }) {
+                return match
+            }
+        }
+
+        return candidates.first
+    }
+
     func exposedParameters(for item: WorkflowItem) -> [WorkflowParameter] {
         let ids = exposedIDs(for: item.id)
         let pinned = Set([
