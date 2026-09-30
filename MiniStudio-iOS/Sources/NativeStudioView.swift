@@ -101,7 +101,7 @@ struct NativeStudioView: View {
                 if phase == .active {
                     Task {
                         await refreshConnection()
-                        await syncWithComfyUI()
+                        await syncResultsFromComfyUI()
                     }
                 }
             }
@@ -789,9 +789,9 @@ struct NativeStudioView: View {
 
             HStack(spacing: 10) {
                 Button {
-                    Task { await syncWithComfyUI(forceWorkflow: true) }
+                    Task { await syncResultsFromComfyUI() }
                 } label: {
-                    Label(syncing ? "Синхронизация…" : "Синхронизировать", systemImage: "arrow.triangle.2.circlepath")
+                    Label(syncing ? "Результаты…" : "Обновить результаты", systemImage: "arrow.triangle.2.circlepath")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
@@ -807,7 +807,7 @@ struct NativeStudioView: View {
                 .disabled(!serverOnline)
             }
 
-            Text("Редактировать открывает настоящий ComfyUI. После возврата приложение снова читает history и последний API workflow, поэтому изменения и результаты появляются в Mini Studio.")
+            Text("Workflow не синхронизируется автоматически. Кнопка обновления получает только новые результаты генерации из ComfyUI history.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
