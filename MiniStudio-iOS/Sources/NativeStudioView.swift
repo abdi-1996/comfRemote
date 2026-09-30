@@ -639,7 +639,7 @@ struct NativeStudioView: View {
                     VStack(spacing: 10) {
                         Image(systemName: "play.rectangle.on.rectangle")
                             .font(.system(size: 42))
-                            .foregroundStyle(.miniStudioAccent.opacity(0.8))
+                            .foregroundStyle(Color.miniStudioAccent.opacity(0.8))
 
                         Text("Здесь появится результат")
                             .font(.subheadline.bold())
@@ -1825,7 +1825,7 @@ private struct MiniStudioResolutionEditor: View {
                         }
                         .font(.caption.bold())
                         .buttonStyle(.bordered)
-                        .tint(ratio == item ? .miniStudioAccent : .secondary)
+                        .tint(ratio == item ? Color.miniStudioAccent : Color.secondary)
                     }
                 }
             }
