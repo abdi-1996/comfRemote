@@ -143,6 +143,26 @@ final class WorkflowStore: ObservableObject {
         save()
     }
 
+    func replaceWithLivePrompt(_ prompt: [String: Any], name: String = "ComfyUI Live") {
+        guard JSONSerialization.isValidJSONObject(prompt),
+              let data = try? JSONSerialization.data(withJSONObject: prompt, options: [.prettyPrinted]) else {
+            return
+        }
+
+        if let existing = workflows.firstIndex(where: { $0.name == name }) {
+            workflows[existing].apiPromptJSON = data
+            workflows[existing].updatedAt = Date()
+            selectedID = workflows[existing].id
+        } else {
+            let item = WorkflowItem(name: name, apiPromptJSON: data)
+            workflows.insert(item, at: 0)
+            selectedID = item.id
+        }
+
+        lastMessage = "Текущий workflow ComfyUI загружен"
+        save()
+    }
+
     func syncPromptFromComfyUI(_ prompt: [String: Any], name: String = "ComfyUI Live") {
         guard JSONSerialization.isValidJSONObject(prompt),
               let data = try? JSONSerialization.data(withJSONObject: prompt, options: [.prettyPrinted]) else {
