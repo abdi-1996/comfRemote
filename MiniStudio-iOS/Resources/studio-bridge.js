@@ -18,7 +18,12 @@ if (!studio && mode === 'create') {
         if (factory.title?.includes('initialization failed')) throw new Error(factory._studioStatus?.textContent);
     }
 }
-if (!studio) return 'no-studio';
+if (!studio) return mode === 'edit' ? 'ready' : 'no-studio';
+if (mode === 'edit') {
+    studio.expand(false);
+    root.change?.();
+    return 'ready';
+}
 if (mode !== 'resume') {
     studio.setTab('generate');
     studio.expand(true);
