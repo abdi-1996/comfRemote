@@ -456,20 +456,39 @@ struct NativeStudioView: View {
                             labeledParameter("Height px", parameter: height)
                         }
 
-                        Text("Video resolution · pixels")
-                            .font(.caption.bold())
-                            .foregroundStyle(.secondary)
-                            .padding(.top, 4)
+                        Divider().opacity(0.5)
 
-                        HStack(spacing: 8) {
-                            formatButton("480p") {
-                                setVideoResolution(width: width, height: height, shortSide: 480)
+                        HStack(spacing: 10) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Pixels")
+                                    .font(.caption.bold())
+                                Text("\(width.value) × \(height.value)")
+                                    .font(.caption2.monospacedDigit())
+                                    .foregroundStyle(.secondary)
                             }
-                            formatButton("720p") {
-                                setVideoResolution(width: width, height: height, shortSide: 720)
-                            }
-                            formatButton("1080p") {
-                                setVideoResolution(width: width, height: height, shortSide: 1080)
+
+                            Spacer(minLength: 8)
+
+                            Menu {
+                                Button("480p") {
+                                    setVideoResolution(width: width, height: height, shortSide: 480)
+                                }
+                                Button("720p") {
+                                    setVideoResolution(width: width, height: height, shortSide: 720)
+                                }
+                                Button("1080p") {
+                                    setVideoResolution(width: width, height: height, shortSide: 1080)
+                                }
+                            } label: {
+                                HStack(spacing: 5) {
+                                    Text("Pixels")
+                                    Image(systemName: "chevron.up.chevron.down")
+                                        .font(.caption2)
+                                }
+                                .font(.caption.bold())
+                                .padding(.horizontal, 11)
+                                .padding(.vertical, 8)
+                                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
                             }
                         }
                     }
@@ -623,7 +642,10 @@ struct NativeStudioView: View {
                     selectedResult = result
                 } label: {
                     LatestResultPreview(result: result)
+                        .frame(maxWidth: .infinity)
+                        .clipped()
                 }
+                .frame(maxWidth: .infinity)
                 .buttonStyle(.plain)
             } else {
                 ZStack {
@@ -1581,6 +1603,8 @@ private struct MiniStudioReferenceSlot: View {
                             .resizable()
                             .scaledToFill()
                             .aspectRatio(1, contentMode: .fill)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .clipped()
                             .clipShape(RoundedRectangle(cornerRadius: 16))
                     } else {
                         VStack(spacing: 8) {
@@ -1961,7 +1985,8 @@ private struct LatestResultPreview: View {
     let result: LocalStudioResult
 
     var body: some View {
-        ZStack {
+        GeometryReader { proxy in
+            ZStack {
             RoundedRectangle(cornerRadius: 18)
                 .fill(Color.white.opacity(0.04))
                 .aspectRatio(16.0 / 10.0, contentMode: .fit)
@@ -2017,6 +2042,12 @@ private struct LatestResultPreview: View {
                 }
             }
         }
+            }
+            .frame(width: proxy.size.width, height: proxy.size.width * 10.0 / 16.0)
+            .clipped()
+        }
+        .aspectRatio(16.0 / 10.0, contentMode: .fit)
+        .frame(maxWidth: .infinity)
     }
 }
 
