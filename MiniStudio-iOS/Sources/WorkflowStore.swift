@@ -398,6 +398,43 @@ final class WorkflowStore: ObservableObject {
         return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     }
 
+    func preparedPrompt(disabledNodeIDs: Set<String>) -> [String: Any]? {
+        guard var root = apiPromptObject() else { return nil }
+        guard !disabledNodeIDs.isEmpty else { return root }
+
+        for nodeID in disabledNodeIDs {
+            root.removeValue(forKey: nodeID)
+        }
+
+        for nodeID in Array(root.keys) {
+            guard var node = root[nodeID] as? [String: Any],
+                  var inputs = node["inputs"] as? [String: Any] else { continue }
+
+            for key in Array(inputs.keys) {
+                guard let link = inputs[key] as? [Any],
+                      let source = link.first else { continue }
+
+                let sourceID: String
+                if let string = source as? String {
+                    sourceID = string
+                } else if let number = source as? NSNumber {
+                    sourceID = number.stringValue
+                } else {
+                    continue
+                }
+
+                if disabledNodeIDs.contains(sourceID) {
+                    inputs.removeValue(forKey: key)
+                }
+            }
+
+            node["inputs"] = inputs
+            root[nodeID] = node
+        }
+
+        return root
+    }
+
     private func apiRoot(for item: WorkflowItem) -> [String: Any]? {
         guard let data = item.apiPromptJSON else { return nil }
         return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -469,7 +506,8 @@ final class WorkflowStore: ObservableObject {
             c.contains("imageinput") ||
             c.contains("inputimage") ||
             c.contains("referenceimage") ||
-            c.contains("refimage")
+            c.contains("refimage") ||
+            c.contains("picture")
 
         let videoClass =
             c.contains("loadvideo") ||
@@ -489,7 +527,7 @@ final class WorkflowStore: ObservableObject {
             return .video
         }
 
-        if imageClass && (k == "file" || k == "path" || k.contains("image")) {
+        if imageClass && (k == "file" || k == "path" || k.contains("image") || k.contains("picture")) {
             return .image
         }
 
