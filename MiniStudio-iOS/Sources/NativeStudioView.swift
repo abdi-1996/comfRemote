@@ -229,7 +229,6 @@ struct NativeStudioView: View {
                                 .frame(width: 38, height: 38)
                         }
                         .buttonStyle(.bordered)
-                        .buttonBorderShape(.circle)
                     }
                 }
 
