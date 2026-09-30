@@ -790,6 +790,16 @@ extension ComfyClient {
 }
 
 
+
+
+struct ComfyHistoryEntry: @unchecked Sendable {
+    let promptID: String
+    let prompt: [String: Any]
+    let files: [ComfyOutputFile]
+    let timestamp: Double
+}
+
+extension ComfyClient {
     static func inputData(base: String, remoteName: String) async throws -> Data {
         guard let root = normalizedBaseURL(base) else { throw ComfyClientError.badURL }
 
@@ -818,15 +828,6 @@ extension ComfyClient {
         return response.body
     }
 
-
-struct ComfyHistoryEntry: @unchecked Sendable {
-    let promptID: String
-    let prompt: [String: Any]
-    let files: [ComfyOutputFile]
-    let timestamp: Double
-}
-
-extension ComfyClient {
     static func recentHistory(base: String, maxItems: Int = 20) async throws -> [ComfyHistoryEntry] {
         guard let root = normalizedBaseURL(base) else { throw ComfyClientError.badURL }
         var components = URLComponents(url: root.appendingPathComponent("history"), resolvingAgainstBaseURL: false)
