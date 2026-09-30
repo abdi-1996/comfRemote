@@ -790,6 +790,35 @@ extension ComfyClient {
 }
 
 
+    static func inputData(base: String, remoteName: String) async throws -> Data {
+        guard let root = normalizedBaseURL(base) else { throw ComfyClientError.badURL }
+
+        let ns = remoteName as NSString
+        let filename = ns.lastPathComponent
+        let subfolder = ns.deletingLastPathComponent == "." ? "" : ns.deletingLastPathComponent
+
+        var components = URLComponents(
+            url: root.appendingPathComponent("view"),
+            resolvingAgainstBaseURL: false
+        )
+        components?.queryItems = [
+            URLQueryItem(name: "filename", value: filename),
+            URLQueryItem(name: "subfolder", value: subfolder),
+            URLQueryItem(name: "type", value: "input")
+        ]
+
+        guard let url = components?.url else { throw ComfyClientError.badURL }
+        let response = try await request(
+            url: url, method: "GET",
+            headers: ["Accept": "*/*"], body: nil, timeout: 60
+        )
+        guard (200..<300).contains(response.statusCode) else {
+            throw ComfyClientError.server("Reference недоступен • HTTP \(response.statusCode)")
+        }
+        return response.body
+    }
+
+
 struct ComfyHistoryEntry: @unchecked Sendable {
     let promptID: String
     let prompt: [String: Any]
