@@ -645,3 +645,146 @@ private extension ComfyClientError {
         .network("Не удалось сформировать HTTP-запрос")
     }
 }
+
+
+enum ComfyOutputKind: String, Sendable {
+    case image
+    case video
+    case audio
+    case file
+}
+
+struct ComfyOutputFile: Identifiable, Hashable, Sendable {
+    let filename: String
+    let subfolder: String
+    let type: String
+    let kind: ComfyOutputKind
+
+    var id: String { type + "|" + subfolder + "|" + filename }
+}
+
+extension ComfyClient {
+    static func interrupt(base: String) async throws {
+        guard let root = normalizedBaseURL(base) else {
+            throw ComfyClientError.badURL
+        }
+
+        let response = try await request(
+            url: root.appendingPathComponent("interrupt"),
+            method: "POST",
+            headers: [
+                "Content-Type": "application/json",
+                "Accept": "application/json"
+            ],
+            body: Data("{}".utf8),
+            timeout: 8
+        )
+
+        guard (200..<300).contains(response.statusCode) else {
+            let text = String(data: response.body, encoding: .utf8) ?? "HTTP \(response.statusCode)"
+            throw ComfyClientError.server(text)
+        }
+    }
+
+    static func resultFiles(base: String, promptID: String) async throws -> [ComfyOutputFile] {
+        guard let root = normalizedBaseURL(base) else {
+            throw ComfyClientError.badURL
+        }
+
+        let url = root
+            .appendingPathComponent("history")
+            .appendingPathComponent(promptID)
+
+        let response = try await request(
+            url: url,
+            method: "GET",
+            headers: ["Accept": "application/json"],
+            body: nil,
+            timeout: 15
+        )
+
+        guard (200..<300).contains(response.statusCode),
+              let rootJSON = try? JSONSerialization.jsonObject(with: response.body) as? [String: Any],
+              let entry = rootJSON[promptID] as? [String: Any],
+              let outputs = entry["outputs"] as? [String: Any] else {
+            return []
+        }
+
+        var found: [ComfyOutputFile] = []
+
+        func appendFile(_ dict: [String: Any]) {
+            guard let filename = dict["filename"] as? String, !filename.isEmpty else { return }
+            let subfolder = dict["subfolder"] as? String ?? ""
+            let type = dict["type"] as? String ?? "output"
+            let ext = (filename as NSString).pathExtension.lowercased()
+
+            let kind: ComfyOutputKind
+            if ["png", "jpg", "jpeg", "webp", "gif", "bmp"].contains(ext) {
+                kind = .image
+            } else if ["mp4", "mov", "m4v", "webm", "mkv"].contains(ext) {
+                kind = .video
+            } else if ["wav", "mp3", "m4a", "aac", "flac", "ogg"].contains(ext) {
+                kind = .audio
+            } else {
+                kind = .file
+            }
+
+            let file = ComfyOutputFile(
+                filename: filename,
+                subfolder: subfolder,
+                type: type,
+                kind: kind
+            )
+            if !found.contains(file) {
+                found.append(file)
+            }
+        }
+
+        for nodeValue in outputs.values {
+            guard let node = nodeValue as? [String: Any] else { continue }
+            for value in node.values {
+                if let array = value as? [[String: Any]] {
+                    for item in array { appendFile(item) }
+                } else if let dict = value as? [String: Any] {
+                    appendFile(dict)
+                }
+            }
+        }
+
+        return found
+    }
+
+    static func resultData(base: String, file: ComfyOutputFile) async throws -> Data {
+        guard let root = normalizedBaseURL(base) else {
+            throw ComfyClientError.badURL
+        }
+
+        var components = URLComponents(
+            url: root.appendingPathComponent("view"),
+            resolvingAgainstBaseURL: false
+        )
+        components?.queryItems = [
+            URLQueryItem(name: "filename", value: file.filename),
+            URLQueryItem(name: "subfolder", value: file.subfolder),
+            URLQueryItem(name: "type", value: file.type)
+        ]
+
+        guard let url = components?.url else {
+            throw ComfyClientError.badURL
+        }
+
+        let response = try await request(
+            url: url,
+            method: "GET",
+            headers: ["Accept": "*/*"],
+            body: nil,
+            timeout: 120
+        )
+
+        guard (200..<300).contains(response.statusCode) else {
+            throw ComfyClientError.server("Не удалось получить результат • HTTP \(response.statusCode)")
+        }
+
+        return response.body
+    }
+}
