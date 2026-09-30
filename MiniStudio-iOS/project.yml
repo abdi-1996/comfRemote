@@ -14,8 +14,6 @@ targets:
     platform: iOS
     sources:
       - path: Sources
-        excludes:
-          - StudioBrowser.swift
       - Resources
     settings:
       base:
