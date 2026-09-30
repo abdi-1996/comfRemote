@@ -134,8 +134,20 @@ struct ComfyClient {
         )
 
         guard (200..<300).contains(response.statusCode) else {
-            let text = String(data: response.body, encoding: .utf8) ?? "HTTP \(response.statusCode)"
-            throw ComfyClientError.server(text)
+            let raw = String(data: response.body, encoding: .utf8) ?? "HTTP \(response.statusCode)"
+            var detail = raw
+            if let json = try? JSONSerialization.jsonObject(with: response.body) as? [String: Any] {
+                if let error = json["error"] as? [String: Any] {
+                    let message = (error["message"] as? String)
+                        ?? (error["details"] as? String)
+                        ?? String(describing: error)
+                    detail = message
+                }
+                if let nodeErrors = json["node_errors"] as? [String: Any], !nodeErrors.isEmpty {
+                    detail += "\nNode errors: " + nodeErrors.keys.sorted().joined(separator: ", ")
+                }
+            }
+            throw ComfyClientError.server("ComfyUI отклонил workflow (HTTP \(response.statusCode)):\n\(detail)")
         }
 
         guard let json = try JSONSerialization.jsonObject(with: response.body) as? [String: Any],
