@@ -653,7 +653,10 @@ struct NativeStudioView: View {
                     selectedResult = result
                 } label: {
                     LatestResultPreview(result: result)
+                        .frame(maxWidth: .infinity)
+                        .clipped()
                 }
+                .frame(maxWidth: .infinity)
                 .buttonStyle(.plain)
             } else {
                 ZStack {
@@ -2003,11 +2006,10 @@ private struct LatestResultPreview: View {
                 ) {
                     Image(uiImage: image)
                         .resizable()
-                        .scaledToFill()
-                        .aspectRatio(16.0 / 10.0, contentMode: .fill)
-                        .clipShape(
-                            RoundedRectangle(cornerRadius: 18)
-                        )
+                        .scaledToFit()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .clipped()
+                        .clipShape(RoundedRectangle(cornerRadius: 18))
                 }
 
             case .video:
