@@ -370,6 +370,34 @@ struct NativeStudioView: View {
         }
     }
 
+    private var modelsPanel: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                panelTitle("Models & LoRAs", subtitle: "Параметры моделей и LoRA из Mini Studio workflow")
+                if let item = store.selected {
+                    turboCard(item)
+                    identityCard(item)
+                    extraQuickCard(item)
+                } else {
+                    noWorkflowCard
+                }
+            }
+            .padding(16)
+            .padding(.bottom, 30)
+        }
+    }
+
+    private var workflowsPanel: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                panelTitle("Workflows", subtitle: "Сохранённые workflow Mini Studio")
+                workflowCard
+            }
+            .padding(16)
+            .padding(.bottom, 30)
+        }
+    }
+
     private var settingsPanel: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
