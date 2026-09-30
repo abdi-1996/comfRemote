@@ -1254,21 +1254,34 @@ struct NativeStudioView: View {
 
     @MainActor
     private func syncResultsFromComfyUI() async {
-        guard serverOnline, !syncing else { return }
+        guard serverOnline, !serverURL.isEmpty, !syncing else { return }
         syncing = true
         defer { syncing = false }
 
         do {
-            let history = try await ComfyClient.recentHistory(base: serverURL, limit: 20)
-            if let latest = history.first {
-                lastHistoryPromptID = latest.promptID
+            let history = try await ComfyClient.recentHistory(base: serverURL, maxItems: 30)
+            let knownPaths = Set(results.map { $0.url.lastPathComponent })
+            var newFiles: [ComfyOutputFile] = []
+
+            for entry in history {
+                for file in entry.files where !knownPaths.contains(file.filename) {
+                    if !newFiles.contains(file) {
+                        newFiles.append(file)
+                    }
+                }
             }
-            let added = await importExternalHistoryResults(history)
-            statusText = added > 0
-                ? "Получено новых результатов: \(added)"
-                : "Результаты синхронизированы"
+
+            if !newFiles.isEmpty {
+                let synced = try await saveResults(newFiles)
+                let existing = Set(results.map { $0.url.path })
+                results.insert(contentsOf: synced.filter { !existing.contains($0.url.path) }, at: 0)
+            }
+
+            statusText = newFiles.isEmpty
+                ? "Результаты синхронизированы"
+                : "Получено новых результатов: \(newFiles.count)"
         } catch {
-            statusText = "Не удалось получить результаты"
+            statusText = "ComfyUI online · результаты недоступны"
         }
     }
 
