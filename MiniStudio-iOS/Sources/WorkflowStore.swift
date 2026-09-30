@@ -489,11 +489,12 @@ final class WorkflowStore: ObservableObject {
 
     func preparedPrompt(disabledNodeIDs: Set<String>) -> [String: Any]? {
         guard var root = apiPromptObject() else { return nil }
-        guard !disabledNodeIDs.isEmpty else { return root }
 
-        for nodeID in disabledNodeIDs {
-            root.removeValue(forKey: nodeID)
-        }
+        // Keep the API graph structurally valid. Removing loader nodes can make
+        // downstream H3/custom-node inputs invalid before execution starts.
+        // For references we disable the direct consumer input instead, while
+        // leaving the node itself in the graph.
+        guard !disabledNodeIDs.isEmpty else { return root }
 
         for nodeID in Array(root.keys) {
             guard var node = root[nodeID] as? [String: Any],
@@ -504,13 +505,9 @@ final class WorkflowStore: ObservableObject {
                       let source = link.first else { continue }
 
                 let sourceID: String
-                if let string = source as? String {
-                    sourceID = string
-                } else if let number = source as? NSNumber {
-                    sourceID = number.stringValue
-                } else {
-                    continue
-                }
+                if let string = source as? String { sourceID = string }
+                else if let number = source as? NSNumber { sourceID = number.stringValue }
+                else { continue }
 
                 if disabledNodeIDs.contains(sourceID) {
                     inputs.removeValue(forKey: key)
