@@ -6,7 +6,7 @@ struct MiniStudioApp: App {
 
     var body: some Scene {
         WindowGroup {
-            NativeStudioView()
+            BrowserStudioView()
                 .environmentObject(store)
                 .preferredColorScheme(.dark)
         }
