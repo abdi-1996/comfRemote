@@ -143,6 +143,26 @@ final class WorkflowStore: ObservableObject {
         save()
     }
 
+    func syncPromptFromComfyUI(_ prompt: [String: Any], name: String = "ComfyUI Live") {
+        guard JSONSerialization.isValidJSONObject(prompt),
+              let data = try? JSONSerialization.data(withJSONObject: prompt, options: [.prettyPrinted]) else {
+            return
+        }
+
+        if let id = selectedID,
+           let i = workflows.firstIndex(where: { $0.id == id }) {
+            workflows[i].apiPromptJSON = data
+            workflows[i].updatedAt = Date()
+        } else {
+            let item = WorkflowItem(name: name, apiPromptJSON: data)
+            workflows.insert(item, at: 0)
+            selectedID = item.id
+        }
+
+        lastMessage = "Workflow обновлён из ComfyUI"
+        save()
+    }
+
     func delete(_ item: WorkflowItem) {
         UserDefaults.standard.removeObject(forKey: exposureKey(item.id))
         workflows.removeAll { $0.id == item.id }
