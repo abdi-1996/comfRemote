@@ -1621,6 +1621,9 @@ private struct MiniStudioReferenceSlot: View {
                 guard let item else { return }
                 Task { await importItem(item) }
             }
+            .task(id: material?.currentValue) {
+                await loadExistingPreview()
+            }
 
             Text(role)
                 .font(.caption.bold())
@@ -1666,6 +1669,22 @@ private struct MiniStudioReferenceSlot: View {
                     lineWidth: 1
                 )
         )
+    }
+
+    @MainActor
+    private func loadExistingPreview() async {
+        guard previewImage == nil,
+              let material,
+              material.kind == .image,
+              !material.currentValue.isEmpty,
+              !serverURL.isEmpty else { return }
+
+        if let data = try? await ComfyClient.inputData(
+            base: serverURL,
+            remoteName: material.currentValue
+        ), let image = UIImage(data: data) {
+            previewImage = image
+        }
     }
 
     @MainActor
