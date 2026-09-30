@@ -94,7 +94,7 @@ struct NativeStudioView: View {
                 loadSavedResults()
                 Task {
                     await refreshConnection()
-                    await syncWithComfyUI()
+                    await syncResultsFromComfyUI()
                 }
             }
             .onChange(of: scenePhase) { phase in
@@ -161,7 +161,7 @@ struct NativeStudioView: View {
             Button {
                 Task {
                     await refreshConnection()
-                    await syncWithComfyUI(forceWorkflow: true)
+                    await syncResultsFromComfyUI()
                 }
             } label: {
                 HStack(spacing: 6) {
@@ -404,7 +404,7 @@ struct NativeStudioView: View {
     private func quickPromptCard(_ item: WorkflowItem) -> some View {
         if let prompt = preferredPrompt(for: item) {
             studioCard(title: "Prompt", icon: "text.alignleft") {
-                NativeParameterEditor(parameter: prompt, multiline: true)
+                NativeParameterEditor(parameter: prompt, multiline: true, promptActions: true)
                     .environmentObject(store)
             }
         }
@@ -452,8 +452,25 @@ struct NativeStudioView: View {
                         }
 
                         HStack(spacing: 10) {
-                            labeledParameter("Width", parameter: width)
-                            labeledParameter("Height", parameter: height)
+                            labeledParameter("Width px", parameter: width)
+                            labeledParameter("Height px", parameter: height)
+                        }
+
+                        Text("Video resolution · pixels")
+                            .font(.caption.bold())
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 4)
+
+                        HStack(spacing: 8) {
+                            formatButton("480p") {
+                                setVideoResolution(width: width, height: height, shortSide: 480)
+                            }
+                            formatButton("720p") {
+                                setVideoResolution(width: width, height: height, shortSide: 720)
+                            }
+                            formatButton("1080p") {
+                                setVideoResolution(width: width, height: height, shortSide: 1080)
+                            }
                         }
                     }
                 }
@@ -1054,6 +1071,22 @@ struct NativeStudioView: View {
             .buttonStyle(.bordered)
     }
 
+    private func setVideoResolution(
+        width: WorkflowParameter,
+        height: WorkflowParameter,
+        shortSide: Int
+    ) {
+        let currentW = Int(width.value) ?? 832
+        let currentH = Int(height.value) ?? 480
+        let landscape = currentW >= currentH
+        let ratio = max(Double(max(currentW, currentH)) / Double(max(1, min(currentW, currentH))), 1.0)
+        let longSide = Int((Double(shortSide) * ratio / 16.0).rounded() * 16.0)
+        let alignedShort = max(16, (shortSide / 16) * 16)
+
+        setParameter(width, String(landscape ? longSide : alignedShort))
+        setParameter(height, String(landscape ? alignedShort : longSide))
+    }
+
     private func durationButton(
         _ label: String,
         seconds: Int,
@@ -1220,46 +1253,22 @@ struct NativeStudioView: View {
     }
 
     @MainActor
-    private func syncWithComfyUI(forceWorkflow: Bool = false) async {
-        guard serverOnline, !serverURL.isEmpty, !syncing else { return }
+    private func syncResultsFromComfyUI() async {
+        guard serverOnline, !syncing else { return }
         syncing = true
         defer { syncing = false }
 
         do {
-            let history = try await ComfyClient.recentHistory(base: serverURL, maxItems: 30)
-
+            let history = try await ComfyClient.recentHistory(base: serverURL, limit: 20)
             if let latest = history.first {
-                if forceWorkflow || latest.promptID != lastHistoryPromptID {
-                    if !latest.prompt.isEmpty {
-                        store.replaceWithLivePrompt(latest.prompt)
-                    }
-                    lastHistoryPromptID = latest.promptID
-                }
+                lastHistoryPromptID = latest.promptID
             }
-
-            let knownPaths = Set(results.map { $0.url.lastPathComponent })
-            var newFiles: [ComfyOutputFile] = []
-            for entry in history {
-                for file in entry.files where !knownPaths.contains(file.filename) {
-                    if !newFiles.contains(file) {
-                        newFiles.append(file)
-                    }
-                }
-            }
-
-            if !newFiles.isEmpty {
-                let synced = try await saveResults(newFiles)
-                let existing = Set(results.map { $0.url.path })
-                results.insert(contentsOf: synced.filter { !existing.contains($0.url.path) }, at: 0)
-            }
-
-            await loadReferencePreviews()
-
-            statusText = history.isEmpty
-                ? "ComfyUI подключён · history пуст"
-                : "Текущий workflow синхронизирован"
+            let added = await importExternalHistoryResults(history)
+            statusText = added > 0
+                ? "Получено новых результатов: \(added)"
+                : "Результаты синхронизированы"
         } catch {
-            statusText = "ComfyUI online · sync недоступен"
+            statusText = "Не удалось получить результаты"
         }
     }
 
@@ -1777,15 +1786,19 @@ private struct NativeParameterEditor: View {
 
     let parameter: WorkflowParameter
     let multiline: Bool
+    let promptActions: Bool
 
     @State private var value: String
+    @FocusState private var textFocused: Bool
 
     init(
         parameter: WorkflowParameter,
-        multiline: Bool
+        multiline: Bool,
+        promptActions: Bool = false
     ) {
         self.parameter = parameter
         self.multiline = multiline
+        self.promptActions = promptActions
         _value = State(initialValue: parameter.value)
     }
 
@@ -1809,20 +1822,46 @@ private struct NativeParameterEditor: View {
                 )
                 .labelsHidden()
             } else if multiline && parameter.kind == .text {
-                TextEditor(text: $value)
-                    .frame(minHeight: 124)
-                    .padding(8)
-                    .scrollContentBackground(.hidden)
-                    .background(
-                        Color.white.opacity(0.045),
-                        in: RoundedRectangle(cornerRadius: 14)
-                    )
-                    .onChange(of: value) { newValue in
-                        store.setParameter(
-                            parameter,
-                            value: newValue
+                VStack(spacing: 8) {
+                    TextEditor(text: $value)
+                        .focused($textFocused)
+                        .frame(minHeight: 124)
+                        .padding(8)
+                        .scrollContentBackground(.hidden)
+                        .background(
+                            Color.white.opacity(0.045),
+                            in: RoundedRectangle(cornerRadius: 14)
                         )
+                        .onChange(of: value) { newValue in
+                            store.setParameter(parameter, value: newValue)
+                        }
+
+                    if promptActions {
+                        HStack(spacing: 10) {
+                            Button("Выделить всё") {
+                                textFocused = true
+                                DispatchQueue.main.async {
+                                    UIApplication.shared.sendAction(
+                                        #selector(UIResponder.selectAll(_:)),
+                                        to: nil, from: nil, for: nil
+                                    )
+                                }
+                            }
+                            .buttonStyle(.bordered)
+
+                            Button("Вставить") {
+                                if let pasted = UIPasteboard.general.string {
+                                    value = pasted
+                                    store.setParameter(parameter, value: pasted)
+                                    textFocused = true
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+
+                            Spacer()
+                        }
                     }
+                }
             } else {
                 TextField(parameter.key, text: $value)
                     .keyboardType(
