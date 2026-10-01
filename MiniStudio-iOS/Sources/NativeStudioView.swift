@@ -1361,8 +1361,14 @@ struct NativeStudioView: View {
             return
         }
 
+        guard let currentItem = store.selected else { return }
+        let livePrompt = preferredPrompt(for: currentItem)?.value
+        let liveSeed = store.primarySeedParameter(for: currentItem)?.value
+
         guard let prompt = store.preparedPrompt(
-            disabledNodeIDs: disabledReferenceNodeIDs
+            disabledNodeIDs: disabledReferenceNodeIDs,
+            promptText: livePrompt,
+            seedValue: liveSeed
         ) else {
             showMessage("У выбранного workflow нет API prompt. Импортируй Save (API Format) JSON.")
             return
@@ -1370,7 +1376,7 @@ struct NativeStudioView: View {
 
         busy = true
         progress = 0.03
-        statusText = "Отправляю workflow…"
+        statusText = "Отправляю Prompt + Seed…"
 
         do {
             let promptID = try await ComfyClient.queue(
