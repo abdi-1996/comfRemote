@@ -1572,9 +1572,27 @@ struct NativeStudioView: View {
     }
 }
 
+private struct WorkflowJSONDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [.json] }
+    var data: Data
+
+    init(data: Data) { self.data = data }
+
+    init(configuration: ReadConfiguration) throws {
+        data = configuration.file.regularFileContents ?? Data()
+    }
+
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: data)
+    }
+}
+
 private struct EmbeddedComfyEditor: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var bridge: ComfyFrontendBridge
+    @State private var exportDocument: WorkflowJSONDocument?
+    @State private var exportName = "workflow"
+    @State private var exportError: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1583,12 +1601,45 @@ private struct EmbeddedComfyEditor: View {
                 Spacer()
                 Text("Workflow").font(.headline)
                 Spacer()
+                Button {
+                    Task {
+                        do {
+                            let data = try await bridge.exportWorkflowData()
+                            exportName = "workflow-" + ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+                            exportDocument = WorkflowJSONDocument(data: data)
+                        } catch {
+                            exportError = error.localizedDescription
+                        }
+                    }
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
+                }
+
                 Button { bridge.reload() } label: { Image(systemName: "arrow.clockwise") }
             }
             .padding(.horizontal, 14).frame(height: 52).background(Color.black)
             ComfyBridgeWebView(bridge: bridge).ignoresSafeArea(edges: .bottom)
         }
         .onAppear { Task { try? await bridge.ensureFlatWorkflow() } }
+        .fileExporter(
+            isPresented: Binding(
+                get: { exportDocument != nil },
+                set: { if !$0 { exportDocument = nil } }
+            ),
+            document: exportDocument,
+            contentType: .json,
+            defaultFilename: exportName
+        ) { _ in
+            exportDocument = nil
+        }
+        .alert("Экспорт workflow", isPresented: Binding(
+            get: { exportError != nil },
+            set: { if !$0 { exportError = nil } }
+        )) {
+            Button("OK", role: .cancel) { exportError = nil }
+        } message: {
+            Text(exportError ?? "")
+        }
         .preferredColorScheme(.dark)
     }
 }
@@ -1711,6 +1762,18 @@ private final class ComfyFrontendBridge: NSObject, ObservableObject, WKNavigatio
         let workflow = object["workflow"],
         let output = object["output"] else { return nil }
         return Snapshot(workflow: workflow, output: output)
+    }
+
+    func exportWorkflowData() async throws -> Data {
+        try await ensureFlatWorkflow()
+        guard let result = try await js("""
+        const { app } = await import(new URL('scripts/app.js', document.baseURI).href);
+        return JSON.stringify(app.graph.serialize(), null, 2);
+        """) as? String,
+        let data = result.data(using: .utf8) else {
+            throw NSError(domain: "WorkflowStudio", code: 41, userInfo: [NSLocalizedDescriptionKey: "Не удалось получить текущий workflow из редактора"])
+        }
+        return data
     }
 
     func apply(_ state: [String: Any]) async throws {
