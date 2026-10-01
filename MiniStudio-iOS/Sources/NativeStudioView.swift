@@ -2076,10 +2076,17 @@ private struct NativeParameterEditor: View {
                     }
             }
         }
-        .onChange(of: parameter.value) { newValue in
-            if value != newValue {
-                value = newValue
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Готово") {
+                    textFocused = false
+                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                }
             }
+        }
+        .onChange(of: parameter.value) { newValue in
+            if value != newValue { value = newValue }
         }
     }
 }
@@ -2089,6 +2096,7 @@ private struct NativeSeedEditor: View {
 
     let parameter: WorkflowParameter
     @State private var value: String
+    @FocusState private var seedFocused: Bool
 
     init(parameter: WorkflowParameter) {
         self.parameter = parameter
@@ -2098,6 +2106,7 @@ private struct NativeSeedEditor: View {
     var body: some View {
         HStack(spacing: 10) {
             TextField("Seed", text: $value)
+                .focused($seedFocused)
                 .keyboardType(.numbersAndPunctuation)
                 .padding(12)
                 .background(
@@ -2126,10 +2135,17 @@ private struct NativeSeedEditor: View {
             }
             .buttonStyle(.bordered)
         }
-        .onChange(of: parameter.value) { newValue in
-            if value != newValue {
-                value = newValue
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Готово") {
+                    seedFocused = false
+                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                }
             }
+        }
+        .onChange(of: parameter.value) { newValue in
+            if value != newValue { value = newValue }
         }
     }
 }
