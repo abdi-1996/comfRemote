@@ -482,6 +482,45 @@ final class WorkflowStore: ObservableObject {
         save()
     }
 
+    func frontendState(for item: WorkflowItem, disabledNodeIDs: Set<String>) -> [String: Any] {
+        var nodes: [String: Any] = [:]
+
+        // API prompt values are used when present. UI-only workflows still get
+        // their current serialized widget values from workflowJSON below.
+        if let api = apiRoot(for: item) {
+            for (id, raw) in api {
+                guard let node = raw as? [String: Any],
+                      let inputs = node["inputs"] as? [String: Any] else { continue }
+                nodes[id] = ["values": inputs, "mode": disabledNodeIDs.contains(id) ? 4 : 0]
+            }
+        }
+
+        if let data = item.workflowJSON,
+           let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            func collect(_ list: [Any]) {
+                for raw in list {
+                    guard let node = raw as? [String: Any], let id = node["id"] else { continue }
+                    let sid = String(describing: id)
+                    var values: [String: Any] = [:]
+                    if let widgets = node["widgets_values"] as? [Any] {
+                        // Preserve serialized widget order as positional keys; JS bridge
+                        // also retains existing graph values when no named override exists.
+                        for (i, value) in widgets.enumerated() { values["__index_\(i)"] = value }
+                    }
+                    nodes[sid] = ["values": values, "mode": disabledNodeIDs.contains(sid) ? 4 : (node["mode"] ?? 0)]
+                }
+            }
+            if let list = root["nodes"] as? [Any] { collect(list) }
+            if let defs = root["definitions"] as? [String: Any],
+               let subs = defs["subgraphs"] as? [Any] {
+                for raw in subs {
+                    if let sub = raw as? [String: Any], let list = sub["nodes"] as? [Any] { collect(list) }
+                }
+            }
+        }
+        return ["nodes": nodes]
+    }
+
     func apiPromptObject() -> [String: Any]? {
         guard let data = selected?.apiPromptJSON else { return nil }
         return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
