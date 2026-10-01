@@ -487,6 +487,60 @@ final class WorkflowStore: ObservableObject {
         return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     }
 
+    func preparedPrompt(
+        disabledNodeIDs: Set<String>,
+        promptText: String?,
+        seedValue: String?
+    ) -> [String: Any]? {
+        guard var root = preparedPrompt(disabledNodeIDs: disabledNodeIDs) else { return nil }
+
+        if let promptText {
+            for nodeID in Array(root.keys) {
+                guard var node = root[nodeID] as? [String: Any],
+                      var inputs = node["inputs"] as? [String: Any] else { continue }
+                let cls = (node["class_type"] as? String ?? "").lowercased()
+                if cls.contains("h3identitycontrol") {
+                    for key in ["prompt", "positive_prompt", "text"] where inputs[key] != nil {
+                        inputs[key] = promptText
+                    }
+                    node["inputs"] = inputs
+                    root[nodeID] = node
+                }
+            }
+        }
+
+        if let seedValue, let seed = Int64(seedValue) {
+            var wrotePreferredSeed = false
+            for nodeID in Array(root.keys) {
+                guard var node = root[nodeID] as? [String: Any],
+                      var inputs = node["inputs"] as? [String: Any] else { continue }
+                let cls = (node["class_type"] as? String ?? "").lowercased()
+                if cls.contains("randomnoise"), inputs["noise_seed"] != nil || inputs["seed"] != nil {
+                    if inputs["noise_seed"] != nil { inputs["noise_seed"] = NSNumber(value: seed) }
+                    if inputs["seed"] != nil { inputs["seed"] = NSNumber(value: seed) }
+                    node["inputs"] = inputs
+                    root[nodeID] = node
+                    wrotePreferredSeed = true
+                }
+            }
+            if !wrotePreferredSeed {
+                for nodeID in Array(root.keys) {
+                    guard var node = root[nodeID] as? [String: Any],
+                          var inputs = node["inputs"] as? [String: Any] else { continue }
+                    if inputs["noise_seed"] != nil {
+                        inputs["noise_seed"] = NSNumber(value: seed)
+                        node["inputs"] = inputs; root[nodeID] = node
+                    } else if inputs["seed"] != nil {
+                        inputs["seed"] = NSNumber(value: seed)
+                        node["inputs"] = inputs; root[nodeID] = node
+                    }
+                }
+            }
+        }
+
+        return root
+    }
+
     func preparedPrompt(disabledNodeIDs: Set<String>) -> [String: Any]? {
         guard var root = apiPromptObject() else { return nil }
 
