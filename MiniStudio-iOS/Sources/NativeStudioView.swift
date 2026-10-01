@@ -165,7 +165,7 @@ struct NativeStudioView: View {
             }
 
             VStack(alignment: .leading, spacing: 3) {
-                Text("Mini Studio")
+                Text("Workflow Studio")
                     .font(.title3.bold())
 
                 Text(store.selected?.name ?? "Отдельное приложение")
@@ -1346,7 +1346,7 @@ struct NativeStudioView: View {
 
         busy = true
         progress = 0.03
-        statusText = "Синхронизирую Mini Studio с ComfyUI…"
+        statusText = "Синхронизирую workflow с ComfyUI…"
 
         do {
             // UI workflows with subgraphs must be flattened by the real ComfyUI frontend.
