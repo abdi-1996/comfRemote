@@ -1357,7 +1357,9 @@ struct NativeStudioView: View {
                 try await comfyBridge.apply(state)
                 statusText = "Отправляю через ComfyUI…"
                 progress = 0.08
-                try await comfyBridge.queue()
+                let livePrompt = preferredPrompt(for: currentItem)?.value
+                let liveSeed = store.primarySeedParameter(for: currentItem)?.value
+                try await comfyBridge.queue(promptText: livePrompt, seedValue: liveSeed)
                 statusText = "Команда отправлена в ComfyUI"
                 // The frontend owns the exact prompt id; result sync reconciles history.
                 for step in 0..<7200 where busy {
@@ -1812,16 +1814,88 @@ private final class ComfyFrontendBridge: NSObject, ObservableObject, WKNavigatio
         if (result as? String) != "applied" { throw NSError(domain:"MiniStudio",code:31,userInfo:[NSLocalizedDescriptionKey:"Не удалось применить настройки в ComfyUI"]) }
     }
 
-    func queue() async throws {
-        try await loadWorkflowIfNeeded(force: false)
-        // queuePrompt performs widget beforeQueued callbacks, graphToPrompt flattening and /prompt.
-        let result = try await js("""
-        const { app } = await import(new URL('scripts/app.js', document.baseURI).href);
-        const ok = await app.queuePrompt(0, 1);
-        return ok ? 'queued' : 'queue-failed';
-        """)
-        if (result as? String) != "queued" {
-            throw NSError(domain: "MiniStudio", code: 32, userInfo: [NSLocalizedDescriptionKey: "ComfyUI не принял Queue Prompt"])
+    func queue(promptText: String?, seedValue: String?) async throws {
+        try await ensureFlatWorkflow()
+        let payload: [String: Any] = [
+            "prompt": promptText ?? NSNull(),
+            "seed": seedValue ?? NSNull()
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload)
+        let encoded = data.base64EncodedString()
+
+        do {
+            let result = try await js("""
+            const { app } = await import(new URL('scripts/app.js', document.baseURI).href);
+            const raw = atob('(encoded)');
+            const payload = JSON.parse(new TextDecoder().decode(Uint8Array.from(raw, c => c.charCodeAt(0))));
+            const nodes = Array.from((app.rootGraph || app.graph)?._nodes || (app.rootGraph || app.graph)?.nodes || []);
+
+            const setWidget = (node, names, value) => {
+              if (value === null || value === undefined) return false;
+              const widgets = Array.from(node?.widgets || []);
+              const widget = widgets.find(w => names.includes(String(w.name || '').toLowerCase()));
+              if (!widget) return false;
+              widget.value = value;
+              widget.callback?.(widget.value, app.canvas, node, app.canvas?.graph_mouse, {});
+              return true;
+            };
+
+            let promptApplied = payload.prompt == null;
+            if (payload.prompt != null) {
+              const preferred = nodes.filter(n => String(n.type || n.comfyClass || '').toLowerCase().includes('h3identitycontrol'));
+              for (const node of [...preferred, ...nodes]) {
+                if (setWidget(node, ['prompt','positive_prompt','text'], payload.prompt)) {
+                  promptApplied = true;
+                  break;
+                }
+              }
+            }
+
+            if (!promptApplied) {
+              throw new Error('Не найден реальный Prompt widget в workflow');
+            }
+
+            if (payload.seed != null) {
+              const seed = Number(payload.seed);
+              if (Number.isFinite(seed)) {
+                const preferred = nodes.filter(n => String(n.type || n.comfyClass || '').toLowerCase().includes('randomnoise'));
+                for (const node of [...preferred, ...nodes]) {
+                  if (setWidget(node, ['noise_seed','seed'], seed)) break;
+                }
+              }
+            }
+
+            app.canvas?.setDirty?.(true, true);
+            const prompt = await app.graphToPrompt();
+            if (!prompt?.output || Object.keys(prompt.output).length === 0) {
+              throw new Error('ComfyUI создал пустой API prompt');
+            }
+
+            const response = await fetch(new URL('prompt', document.baseURI), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ prompt: prompt.output, client_id: app.api?.clientId })
+            });
+            const body = await response.text();
+            if (!response.ok) throw new Error('ComfyUI /prompt ' + response.status + ': ' + body);
+            let parsed = {};
+            try { parsed = JSON.parse(body); } catch {}
+            if (parsed.error) throw new Error(typeof parsed.error === 'string' ? parsed.error : JSON.stringify(parsed.error));
+            return JSON.stringify({ ok: true, prompt_id: parsed.prompt_id || null });
+            """)
+
+            guard let text = result as? String,
+                  let resultData = text.data(using: .utf8),
+                  let object = try JSONSerialization.jsonObject(with: resultData) as? [String: Any],
+                  object["ok"] as? Bool == true else {
+                throw NSError(domain: "WorkflowStudio", code: 32, userInfo: [NSLocalizedDescriptionKey: "ComfyUI не подтвердил запуск"])
+            }
+        } catch {
+            throw NSError(
+                domain: "WorkflowStudio",
+                code: 32,
+                userInfo: [NSLocalizedDescriptionKey: "Ошибка ComfyUI: \(error.localizedDescription)"]
+            )
         }
     }
 }
