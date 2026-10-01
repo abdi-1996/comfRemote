@@ -89,7 +89,9 @@ struct NativeStudioView: View {
             .fullScreenCover(isPresented: $showingComfyEditor, onDismiss: {
                 Task { await syncWorkflowFromFrontend() }
             }) {
-                EmbeddedComfyEditor(bridge: comfyBridge)
+                EmbeddedComfyEditor(bridge: comfyBridge) {
+                    await syncWorkflowFromFrontend()
+                }
             }
             .sheet(isPresented: $showingImporter) {
                 WorkflowDocumentPicker(
@@ -1592,6 +1594,7 @@ private struct WorkflowJSONDocument: FileDocument {
 private struct EmbeddedComfyEditor: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var bridge: ComfyFrontendBridge
+    let onSync: () async -> Void
     @State private var exportDocument: WorkflowJSONDocument?
     @State private var exportName = "workflow"
     @State private var exportError: String?
@@ -1623,6 +1626,13 @@ private struct EmbeddedComfyEditor: View {
             ComfyBridgeWebView(bridge: bridge).ignoresSafeArea(edges: .bottom)
         }
         .onAppear { Task { try? await bridge.ensureFlatWorkflow() } }
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 800_000_000)
+                guard !Task.isCancelled else { break }
+                await onSync()
+            }
+        }
         .fileExporter(
             isPresented: Binding(
                 get: { exportDocument != nil },
@@ -1658,6 +1668,7 @@ private final class ComfyFrontendBridge: NSObject, ObservableObject, WKNavigatio
     private var address = ""
     private var workflowJSON: Data?
     private var pendingLoad = false
+    private var workflowLoaded = false
 
     lazy var webView: WKWebView = {
         let config = WKWebViewConfiguration()
@@ -1671,15 +1682,26 @@ private final class ComfyFrontendBridge: NSObject, ObservableObject, WKNavigatio
     }()
 
     func connect(_ address: String, workflowJSON: Data?) {
-        self.workflowJSON = workflowJSON
         let normalized = address.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return }
-        if self.address == normalized && webView.url != nil {
-            Task { try? await loadWorkflowIfNeeded(force: workflowJSON != nil) }
+
+        let sameAddress = self.address == normalized && webView.url != nil
+        let workflowChanged = self.workflowJSON != workflowJSON
+        self.workflowJSON = workflowJSON
+
+        if sameAddress {
+            // Do not reload the graph just because Generate/sync called connect again.
+            // Reloading here used to overwrite edits made in the embedded ComfyUI editor.
+            if workflowChanged {
+                workflowLoaded = false
+                Task { try? await loadWorkflowIfNeeded(force: true) }
+            }
             return
         }
+
         self.address = normalized
         ready = false
+        workflowLoaded = false
         guard let url = ComfyClient.editorURL(base: normalized) else { return }
         webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
     }
@@ -1695,8 +1717,9 @@ private final class ComfyFrontendBridge: NSObject, ObservableObject, WKNavigatio
     }
 
     private func loadWorkflowIfNeeded(force: Bool) async throws {
-        guard let workflowJSON else { ready = true; return }
+        guard let workflowJSON else { ready = true; workflowLoaded = true; return }
         if pendingLoad { return }
+        if workflowLoaded && !force { return }
         pendingLoad = true; defer { pendingLoad = false }
         let encoded = workflowJSON.base64EncodedString()
         let result = try await js("""
@@ -1721,6 +1744,7 @@ private final class ComfyFrontendBridge: NSObject, ObservableObject, WKNavigatio
         return 'loaded';
         """)
         ready = (result as? String) == "loaded"
+        workflowLoaded = ready
     }
 
     func ensureFlatWorkflow() async throws {
