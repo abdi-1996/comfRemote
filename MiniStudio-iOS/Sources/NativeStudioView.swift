@@ -3,6 +3,7 @@ import UIKit
 import PhotosUI
 import UniformTypeIdentifiers
 import AVKit
+import WebKit
 
 private extension Color {
     static let miniStudioAccent = Color(red: 197.0/255.0, green: 242.0/255.0, blue: 119.0/255.0)
@@ -60,6 +61,7 @@ struct NativeStudioView: View {
     @State private var checkingServer = false
     @State private var syncing = false
     @State private var lastHistoryPromptID = ""
+    @State private var showingComfyEditor = false
 
     var body: some View {
         NavigationStack {
@@ -82,6 +84,9 @@ struct NativeStudioView: View {
             .toolbar(.hidden, for: .navigationBar)
             .sheet(item: $selectedResult) { result in
                 ResultDetailView(result: result)
+            }
+            .fullScreenCover(isPresented: $showingComfyEditor) {
+                EmbeddedComfyEditor(serverURL: serverURL)
             }
             .sheet(isPresented: $showingImporter) {
                 WorkflowDocumentPicker(
@@ -1341,11 +1346,11 @@ struct NativeStudioView: View {
     }
 
     private func openComfyUIEditor() {
-        guard let url = ComfyClient.editorURL(base: serverURL) else {
+        guard ComfyClient.editorURL(base: serverURL) != nil else {
             showMessage("Неверный адрес ComfyUI")
             return
         }
-        openURL(url)
+        showingComfyEditor = true
     }
 
     @MainActor
@@ -1584,6 +1589,78 @@ struct NativeStudioView: View {
         } catch {
             showMessage(error.localizedDescription)
         }
+    }
+}
+
+private struct EmbeddedComfyEditor: View {
+    @Environment(\.dismiss) private var dismiss
+    let serverURL: String
+    @State private var reloadToken = UUID()
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Button { dismiss() } label: {
+                    Label("Назад", systemImage: "chevron.left")
+                }
+                .font(.subheadline.bold())
+
+                Spacer()
+                Text("ComfyUI")
+                    .font(.headline)
+                Spacer()
+
+                Button {
+                    reloadToken = UUID()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.subheadline.bold())
+                }
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 52)
+            .background(Color.black)
+
+            if let url = ComfyClient.editorURL(base: serverURL) {
+                EmbeddedComfyWebView(url: url, reloadToken: reloadToken)
+                    .ignoresSafeArea(edges: .bottom)
+            } else {
+                ContentUnavailableView("Неверный адрес ComfyUI", systemImage: "wifi.exclamationmark")
+            }
+        }
+        .preferredColorScheme(.dark)
+    }
+}
+
+private struct EmbeddedComfyWebView: UIViewRepresentable {
+    let url: URL
+    let reloadToken: UUID
+
+    func makeUIView(context: Context) -> WKWebView {
+        let config = WKWebViewConfiguration()
+        config.websiteDataStore = .default()
+        config.allowsInlineMediaPlayback = true
+        let web = WKWebView(frame: .zero, configuration: config)
+        web.isOpaque = false
+        web.backgroundColor = .black
+        web.scrollView.backgroundColor = .black
+        web.allowsBackForwardNavigationGestures = true
+        web.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
+        return web
+    }
+
+    func updateUIView(_ web: WKWebView, context: Context) {
+        if context.coordinator.lastReloadToken != reloadToken {
+            context.coordinator.lastReloadToken = reloadToken
+            web.reload()
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(reloadToken) }
+
+    final class Coordinator {
+        var lastReloadToken: UUID
+        init(_ token: UUID) { lastReloadToken = token }
     }
 }
 
