@@ -466,7 +466,9 @@ struct NativeStudioView: View {
     private func quickPromptCard(_ item: WorkflowItem) -> some View {
         if let prompt = preferredPrompt(for: item) {
             studioCard(title: "Prompt", icon: "text.alignleft") {
-                NativeParameterEditor(parameter: prompt, multiline: true, promptActions: true)
+                NativeParameterEditor(parameter: prompt, multiline: true, promptActions: true) { parameter, value in
+                    applyLiveParameter(parameter, value)
+                }
                     .environmentObject(store)
             }
         }
@@ -522,7 +524,9 @@ struct NativeStudioView: View {
     private func seedCard(_ item: WorkflowItem) -> some View {
         if let seed = store.primarySeedParameter(for: item) {
             studioCard(title: "Seed", icon: "dice.fill") {
-                NativeSeedEditor(parameter: seed)
+                NativeSeedEditor(parameter: seed) { parameter, value in
+                    applyLiveParameter(parameter, value)
+                }
                     .environmentObject(store)
             }
         }
@@ -1164,6 +1168,22 @@ struct NativeStudioView: View {
         _ value: String
     ) {
         store.setParameter(parameter, value: value)
+        applyLiveParameter(parameter, value)
+    }
+
+    private func applyLiveParameter(_ parameter: WorkflowParameter, _ value: String) {
+        Task { @MainActor in
+            do {
+                try await comfyBridge.applyParameter(
+                    nodeID: parameter.nodeID,
+                    key: parameter.key,
+                    value: value,
+                    kind: parameter.kind
+                )
+            } catch {
+                statusText = "Ошибка синхронизации: \(error.localizedDescription)"
+            }
+        }
     }
 
     private func uniqueParameters(
@@ -1802,6 +1822,46 @@ private final class ComfyFrontendBridge: NSObject, ObservableObject, WKNavigatio
         return data
     }
 
+    func applyParameter(nodeID: String, key: String, value: String, kind: WorkflowParameter.ValueKind) async throws {
+        try await loadWorkflowIfNeeded(force: false)
+        let payload: [String: Any] = ["nodeID": nodeID, "key": key, "value": value]
+        let data = try JSONSerialization.data(withJSONObject: payload)
+        let encoded = data.base64EncodedString()
+        let result = try await js("""
+        const { app } = await import(new URL('scripts/app.js', document.baseURI).href);
+        const raw = atob('(encoded)');
+        const p = JSON.parse(new TextDecoder().decode(Uint8Array.from(raw, c => c.charCodeAt(0))));
+        const root = app.rootGraph || app.graph;
+        const graphs = [root, ...Array.from(root?.subgraphs?.values?.() || [])];
+        let node = null;
+        for (const graph of graphs) {
+          node = Array.from(graph?._nodes || graph?.nodes || []).find(n => String(n.id) === String(p.nodeID));
+          if (node) break;
+        }
+        if (!node) throw new Error('Node ' + p.nodeID + ' не найдена в live workflow');
+        const widgets = Array.from(node.widgets || []);
+        let widget = widgets.find(w => String(w.name || '').toLowerCase() === String(p.key).toLowerCase());
+        if (!widget) {
+          const aliases = { positive_prompt:['prompt','text'], prompt:['positive_prompt','text'], noise_seed:['seed'], seed:['noise_seed'] };
+          const names = aliases[String(p.key).toLowerCase()] || [];
+          widget = widgets.find(w => names.includes(String(w.name || '').toLowerCase()));
+        }
+        if (!widget) throw new Error('Параметр ' + p.key + ' не найден в node ' + p.nodeID);
+        let v = p.value;
+        if (typeof widget.value === 'number') v = Number(v);
+        else if (typeof widget.value === 'boolean') v = ['true','1','yes','on'].includes(String(v).toLowerCase());
+        widget.value = v;
+        widget.callback?.(widget.value, app.canvas, node, app.canvas?.graph_mouse, {});
+        node.onWidgetChanged?.(widget.name, widget.value, widget.value, widget);
+        node.graph?.setDirtyCanvas?.(true, true);
+        app.canvas?.setDirty?.(true, true);
+        return 'applied';
+        """)
+        if (result as? String) != "applied" {
+            throw NSError(domain:"WorkflowStudio",code:33,userInfo:[NSLocalizedDescriptionKey:"Live параметр не применён"])
+        }
+    }
+
     func apply(_ state: [String: Any]) async throws {
         try await loadWorkflowIfNeeded(force: false)
         let data = try JSONSerialization.data(withJSONObject: state)
@@ -2257,6 +2317,7 @@ private struct NativeParameterEditor: View {
     let parameter: WorkflowParameter
     let multiline: Bool
     let promptActions: Bool
+    let onLiveChange: ((WorkflowParameter, String) -> Void)?
 
     @State private var value: String
     @FocusState private var textFocused: Bool
@@ -2264,11 +2325,13 @@ private struct NativeParameterEditor: View {
     init(
         parameter: WorkflowParameter,
         multiline: Bool,
-        promptActions: Bool = false
+        promptActions: Bool = false,
+        onLiveChange: ((WorkflowParameter, String) -> Void)? = nil
     ) {
         self.parameter = parameter
         self.multiline = multiline
         self.promptActions = promptActions
+        self.onLiveChange = onLiveChange
         _value = State(initialValue: parameter.value)
     }
 
@@ -2287,6 +2350,7 @@ private struct NativeParameterEditor: View {
                                 parameter,
                                 value: value
                             )
+                            onLiveChange?(parameter, value)
                         }
                     )
                 )
@@ -2304,6 +2368,7 @@ private struct NativeParameterEditor: View {
                         )
                         .onChange(of: value) { newValue in
                             store.setParameter(parameter, value: newValue)
+                            onLiveChange?(parameter, newValue)
                         }
 
                     if promptActions {
@@ -2323,6 +2388,7 @@ private struct NativeParameterEditor: View {
                                 if let pasted = UIPasteboard.general.string {
                                     value = pasted
                                     store.setParameter(parameter, value: pasted)
+                                    onLiveChange?(parameter, pasted)
                                     textFocused = true
                                 }
                             }
@@ -2353,6 +2419,7 @@ private struct NativeParameterEditor: View {
                             parameter,
                             value: newValue
                         )
+                        onLiveChange?(parameter, newValue)
                     }
             }
         }
@@ -2375,11 +2442,13 @@ private struct NativeSeedEditor: View {
     @EnvironmentObject private var store: WorkflowStore
 
     let parameter: WorkflowParameter
+    let onLiveChange: ((WorkflowParameter, String) -> Void)?
     @State private var value: String
     @FocusState private var seedFocused: Bool
 
-    init(parameter: WorkflowParameter) {
+    init(parameter: WorkflowParameter, onLiveChange: ((WorkflowParameter, String) -> Void)? = nil) {
         self.parameter = parameter
+        self.onLiveChange = onLiveChange
         _value = State(initialValue: parameter.value)
     }
 
