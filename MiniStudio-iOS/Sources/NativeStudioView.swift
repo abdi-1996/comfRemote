@@ -1675,9 +1675,15 @@ private final class ComfyFrontendBridge: NSObject, ObservableObject, WKNavigatio
             const id = String(node.id);
             const patch = state.nodes?.[id];
             if (!patch) continue;
-            for (const w of node.widgets || []) {
-              if (Object.prototype.hasOwnProperty.call(patch.values || {}, w.name)) {
-                w.value = patch.values[w.name];
+            const widgets = node.widgets || [];
+            for (let wi = 0; wi < widgets.length; wi++) {
+              const w = widgets[wi];
+              const values = patch.values || {};
+              const hasNamed = Object.prototype.hasOwnProperty.call(values, w.name);
+              const indexed = '__index_' + wi;
+              const hasIndexed = Object.prototype.hasOwnProperty.call(values, indexed);
+              if (hasNamed || hasIndexed) {
+                w.value = hasNamed ? values[w.name] : values[indexed];
                 w.callback?.(w.value, app.canvas, node, app.canvas?.graph_mouse, {});
               }
             }
