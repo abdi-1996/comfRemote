@@ -86,7 +86,7 @@ struct NativeStudioView: View {
                 ResultDetailView(result: result)
             }
             .fullScreenCover(isPresented: $showingComfyEditor) {
-                EmbeddedComfyEditor(serverURL: serverURL)
+                EmbeddedComfyEditor(serverURL: serverURL, workflowJSON: store.selected?.workflowJSON)
             }
             .sheet(isPresented: $showingImporter) {
                 WorkflowDocumentPicker(
@@ -1569,6 +1569,7 @@ struct NativeStudioView: View {
 private struct EmbeddedComfyEditor: View {
     @Environment(\.dismiss) private var dismiss
     let serverURL: String
+    let workflowJSON: Data?
     @State private var reloadToken = UUID()
 
     var body: some View {
@@ -1596,7 +1597,7 @@ private struct EmbeddedComfyEditor: View {
             .background(Color.black)
 
             if let url = ComfyClient.editorURL(base: serverURL) {
-                EmbeddedComfyWebView(url: url, reloadToken: reloadToken)
+                EmbeddedComfyWebView(url: url, workflowJSON: workflowJSON, reloadToken: reloadToken)
                     .ignoresSafeArea(edges: .bottom)
             } else {
                 VStack(spacing: 12) {
@@ -1612,6 +1613,7 @@ private struct EmbeddedComfyEditor: View {
 
 private struct EmbeddedComfyWebView: UIViewRepresentable {
     let url: URL
+    let workflowJSON: Data?
     let reloadToken: UUID
 
     func makeUIView(context: Context) -> WKWebView {
@@ -1619,6 +1621,7 @@ private struct EmbeddedComfyWebView: UIViewRepresentable {
         config.websiteDataStore = .default()
         config.allowsInlineMediaPlayback = true
         let web = WKWebView(frame: .zero, configuration: config)
+        web.navigationDelegate = context.coordinator
         web.isOpaque = false
         web.backgroundColor = .black
         web.scrollView.backgroundColor = .black
@@ -1634,11 +1637,38 @@ private struct EmbeddedComfyWebView: UIViewRepresentable {
         }
     }
 
-    func makeCoordinator() -> Coordinator { Coordinator(reloadToken) }
+    func makeCoordinator() -> Coordinator { Coordinator(reloadToken, workflowJSON) }
 
-    final class Coordinator {
+    final class Coordinator: NSObject, WKNavigationDelegate {
         var lastReloadToken: UUID
-        init(_ token: UUID) { lastReloadToken = token }
+        let workflowJSON: Data?
+        init(_ token: UUID, _ workflowJSON: Data?) {
+            self.lastReloadToken = token
+            self.workflowJSON = workflowJSON
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            guard let workflowJSON,
+                  let json = String(data: workflowJSON, encoding: .utf8) else { return }
+            let encoded = Data(json.utf8).base64EncodedString()
+            let script = """
+            (async () => {
+              try {
+                const { app } = await import(new URL('scripts/app.js', document.baseURI).href);
+                const raw = atob('\(encoded)');
+                const bytes = Uint8Array.from(raw, c => c.charCodeAt(0));
+                const workflow = JSON.parse(new TextDecoder().decode(bytes));
+                await app.loadGraphData(workflow, true, true);
+                app.graph?.setDirtyCanvas?.(true, true);
+                return 'loaded';
+              } catch (e) {
+                console.error('Mini Studio workflow load failed', e);
+                return String(e);
+              }
+            })();
+            """
+            webView.evaluateJavaScript(script)
+        }
     }
 }
 
