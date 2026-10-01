@@ -62,6 +62,7 @@ struct NativeStudioView: View {
     @State private var syncing = false
     @State private var lastHistoryPromptID = ""
     @State private var showingComfyEditor = false
+    @StateObject private var comfyBridge = ComfyFrontendBridge()
 
     var body: some View {
         NavigationStack {
@@ -86,7 +87,7 @@ struct NativeStudioView: View {
                 ResultDetailView(result: result)
             }
             .fullScreenCover(isPresented: $showingComfyEditor) {
-                EmbeddedComfyEditor(serverURL: serverURL, workflowJSON: store.selected?.workflowJSON)
+                EmbeddedComfyEditor(bridge: comfyBridge)
             }
             .sheet(isPresented: $showingImporter) {
                 WorkflowDocumentPicker(
@@ -107,6 +108,7 @@ struct NativeStudioView: View {
             }
             .onAppear {
                 loadSavedResults()
+                comfyBridge.connect(serverURL, workflowJSON: store.selected?.workflowJSON)
                 Task {
                     await refreshConnection()
                     await syncResultsFromComfyUI()
@@ -123,6 +125,10 @@ struct NativeStudioView: View {
             .onChange(of: store.selectedID) { _ in
                 disabledReferenceNodeIDs.removeAll()
                 referencePreviews.removeAll()
+                comfyBridge.connect(serverURL, workflowJSON: store.selected?.workflowJSON)
+            }
+            .onChange(of: serverURL) { newValue in
+                comfyBridge.connect(newValue, workflowJSON: store.selected?.workflowJSON)
             }
         }
         .tint(Color.miniStudioAccent)
@@ -719,7 +725,7 @@ struct NativeStudioView: View {
             .buttonStyle(.borderedProminent)
             .tint(Color.miniStudioAccent)
             .foregroundStyle(.black)
-            .disabled(busy || store.selected?.apiPromptJSON == nil || !serverOnline)
+            .disabled(busy || store.selected == nil || !serverOnline)
 
             if busy {
                 Button(role: .destructive) {
@@ -1328,84 +1334,66 @@ struct NativeStudioView: View {
             panel = .settings
             return
         }
-
         guard let currentItem = store.selected else { return }
-        let livePrompt = preferredPrompt(for: currentItem)?.value
-        let liveSeed = store.primarySeedParameter(for: currentItem)?.value
-
-        guard let prompt = store.preparedPrompt(
-            disabledNodeIDs: disabledReferenceNodeIDs,
-            promptText: livePrompt,
-            seedValue: liveSeed
-        ) else {
-            showMessage("У выбранного workflow нет API prompt. Импортируй Save (API Format) JSON.")
-            return
-        }
 
         busy = true
         progress = 0.03
-        statusText = "Отправляю Prompt + Seed…"
+        statusText = "Синхронизирую Mini Studio с ComfyUI…"
 
         do {
-            let promptID = try await ComfyClient.queue(
-                base: serverURL,
-                prompt: prompt
-            )
-
-            statusText = "В очереди · \(promptID.prefix(8))"
-            progress = 0.08
-
-            var finished = false
-            var checks = 0
-
-            while busy && !finished && checks < 7200 {
-                try await Task.sleep(nanoseconds: 1_000_000_000)
-                checks += 1
-
-                finished = try await ComfyClient.generationFinished(
-                    base: serverURL,
-                    promptID: promptID
-                )
-
-                if finished {
-                    progress = 0.96
-                    statusText = "Получаю результат…"
-
-                    let files = try await ComfyClient.resultFiles(
-                        base: serverURL,
-                        promptID: promptID
-                    )
-
-                    let newResults = try await saveResults(files)
-                    results.insert(contentsOf: newResults, at: 0)
-
-                    progress = 1
-                    statusText = newResults.isEmpty
-                        ? "Готово · output сохранён на ПК"
-                        : "Готово · \(newResults.count) результат(а)"
-                } else {
-                    let remaining = max(0, 0.92 - progress)
-                    progress = min(
-                        0.92,
-                        progress + max(0.002, remaining * 0.025)
-                    )
+            // UI workflows with subgraphs must be flattened by the real ComfyUI frontend.
+            // API-format workflows keep the direct /prompt path as a compatibility fallback.
+            if currentItem.workflowJSON != nil {
+                comfyBridge.connect(serverURL, workflowJSON: currentItem.workflowJSON)
+                let state = store.frontendState(for: currentItem, disabledNodeIDs: disabledReferenceNodeIDs)
+                try await comfyBridge.apply(state)
+                statusText = "Отправляю через ComfyUI…"
+                progress = 0.08
+                try await comfyBridge.queue()
+                statusText = "Команда отправлена в ComfyUI"
+                // The frontend owns the exact prompt id; result sync reconciles history.
+                for step in 0..<7200 where busy {
+                    try await Task.sleep(nanoseconds: 1_000_000_000)
+                    if step % 2 == 0 {
+                        let before = results.count
+                        await syncResultsFromComfyUI()
+                        if results.count > before {
+                            progress = 1
+                            statusText = "Готово · новый результат"
+                            break
+                        }
+                    }
+                    progress = min(0.92, progress + 0.003)
                 }
-            }
-
-            if !finished && busy {
-                statusText = "Генерация ещё выполняется на ПК"
+            } else {
+                let livePrompt = preferredPrompt(for: currentItem)?.value
+                let liveSeed = store.primarySeedParameter(for: currentItem)?.value
+                guard let prompt = store.preparedPrompt(disabledNodeIDs: disabledReferenceNodeIDs, promptText: livePrompt, seedValue: liveSeed) else {
+                    throw NSError(domain: "MiniStudio", code: 20, userInfo: [NSLocalizedDescriptionKey: "Нет исполняемого workflow"])
+                }
+                let promptID = try await ComfyClient.queue(base: serverURL, prompt: prompt)
+                statusText = "В очереди · \(promptID.prefix(8))"
+                progress = 0.08
+                var finished = false
+                var checks = 0
+                while busy && !finished && checks < 7200 {
+                    try await Task.sleep(nanoseconds: 1_000_000_000); checks += 1
+                    finished = try await ComfyClient.generationFinished(base: serverURL, promptID: promptID)
+                    if finished {
+                        let files = try await ComfyClient.resultFiles(base: serverURL, promptID: promptID)
+                        let newResults = try await saveResults(files)
+                        results.insert(contentsOf: newResults, at: 0)
+                        progress = 1
+                        statusText = "Готово · \(newResults.count) результат(а)"
+                    } else { progress = min(0.92, progress + 0.003) }
+                }
             }
         } catch {
             statusText = "Ошибка генерации"
             showMessage(error.localizedDescription)
         }
-
         busy = false
-
-        if progress >= 1 {
-            try? await Task.sleep(nanoseconds: 300_000_000)
-        }
-
+        if progress >= 1 { try? await Task.sleep(nanoseconds: 300_000_000) }
         progress = 0
     }
 
@@ -1568,106 +1556,150 @@ struct NativeStudioView: View {
 
 private struct EmbeddedComfyEditor: View {
     @Environment(\.dismiss) private var dismiss
-    let serverURL: String
-    let workflowJSON: Data?
-    @State private var reloadToken = UUID()
+    @ObservedObject var bridge: ComfyFrontendBridge
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                Button { dismiss() } label: {
-                    Label("Назад", systemImage: "chevron.left")
-                }
-                .font(.subheadline.bold())
-
+            HStack {
+                Button { dismiss() } label: { Label("Назад", systemImage: "chevron.left") }
                 Spacer()
-                Text("ComfyUI")
-                    .font(.headline)
+                Text("Mini Studio · Subgraph").font(.headline)
                 Spacer()
-
-                Button {
-                    reloadToken = UUID()
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.subheadline.bold())
-                }
+                Button { bridge.reload() } label: { Image(systemName: "arrow.clockwise") }
             }
-            .padding(.horizontal, 14)
-            .frame(height: 52)
-            .background(Color.black)
-
-            if let url = ComfyClient.editorURL(base: serverURL) {
-                EmbeddedComfyWebView(url: url, workflowJSON: workflowJSON, reloadToken: reloadToken)
-                    .ignoresSafeArea(edges: .bottom)
-            } else {
-                VStack(spacing: 12) {
-                    Image(systemName: "wifi.exclamationmark").font(.largeTitle)
-                    Text("Неверный адрес ComfyUI").font(.headline)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
+            .padding(.horizontal, 14).frame(height: 52).background(Color.black)
+            ComfyBridgeWebView(bridge: bridge).ignoresSafeArea(edges: .bottom)
         }
+        .onAppear { Task { try? await bridge.openMiniStudioSubgraph() } }
         .preferredColorScheme(.dark)
     }
 }
 
-private struct EmbeddedComfyWebView: UIViewRepresentable {
-    let url: URL
-    let workflowJSON: Data?
-    let reloadToken: UUID
+private struct ComfyBridgeWebView: UIViewRepresentable {
+    @ObservedObject var bridge: ComfyFrontendBridge
+    func makeUIView(context: Context) -> WKWebView { bridge.webView }
+    func updateUIView(_ uiView: WKWebView, context: Context) {}
+}
 
-    func makeUIView(context: Context) -> WKWebView {
+@MainActor
+private final class ComfyFrontendBridge: NSObject, ObservableObject, WKNavigationDelegate {
+    @Published var ready = false
+    private var address = ""
+    private var workflowJSON: Data?
+    private var pendingLoad = false
+
+    lazy var webView: WKWebView = {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .default()
         config.allowsInlineMediaPlayback = true
-        let web = WKWebView(frame: .zero, configuration: config)
-        web.navigationDelegate = context.coordinator
-        web.isOpaque = false
-        web.backgroundColor = .black
-        web.scrollView.backgroundColor = .black
-        web.allowsBackForwardNavigationGestures = true
-        web.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
-        return web
+        let view = WKWebView(frame: .zero, configuration: config)
+        view.navigationDelegate = self
+        view.isOpaque = false
+        view.backgroundColor = .black
+        return view
+    }()
+
+    func connect(_ address: String, workflowJSON: Data?) {
+        self.workflowJSON = workflowJSON
+        let normalized = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return }
+        if self.address == normalized && webView.url != nil {
+            Task { try? await loadWorkflowIfNeeded(force: workflowJSON != nil) }
+            return
+        }
+        self.address = normalized
+        ready = false
+        guard let url = ComfyClient.editorURL(base: normalized) else { return }
+        webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
     }
 
-    func updateUIView(_ web: WKWebView, context: Context) {
-        if context.coordinator.lastReloadToken != reloadToken {
-            context.coordinator.lastReloadToken = reloadToken
-            web.reload()
+    func reload() { ready = false; webView.reload() }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        Task { try? await loadWorkflowIfNeeded(force: true) }
+    }
+
+    private func js(_ source: String) async throws -> Any? {
+        try await webView.callAsyncJavaScript(source, arguments: [:], in: nil, contentWorld: .page)
+    }
+
+    private func loadWorkflowIfNeeded(force: Bool) async throws {
+        guard let workflowJSON else { ready = true; return }
+        if pendingLoad { return }
+        pendingLoad = true; defer { pendingLoad = false }
+        let encoded = workflowJSON.base64EncodedString()
+        let result = try await js("""
+        const { app } = await import(new URL('scripts/app.js', document.baseURI).href);
+        const raw = atob('\(encoded)');
+        const workflow = JSON.parse(new TextDecoder().decode(Uint8Array.from(raw, c => c.charCodeAt(0))));
+        await app.loadGraphData(workflow, true, true);
+        app.canvas?.setDirty?.(true, true);
+        return 'loaded';
+        """)
+        ready = (result as? String) == "loaded"
+    }
+
+    func openMiniStudioSubgraph() async throws {
+        try await loadWorkflowIfNeeded(force: false)
+        let result = try await js("""
+        const { app } = await import(new URL('scripts/app.js', document.baseURI).href);
+        const root = app.rootGraph || app.graph;
+        const nodes = Array.from(root?._nodes || root?.nodes || []);
+        const node = nodes.find(n => {
+          const t = String(n.title || '').toLowerCase();
+          const type = String(n.type || '').toLowerCase();
+          return !!n.subgraph && (t.includes('mini studio') || type.includes('mini') || type.includes('studio'));
+        }) || nodes.find(n => !!n.subgraph);
+        if (!node?.subgraph) return 'missing-subgraph';
+        app.canvas.setGraph(node.subgraph);
+        app.canvas.setDirty(true, true);
+        return 'opened';
+        """)
+        if (result as? String) != "opened" {
+            throw NSError(domain: "MiniStudio", code: 30, userInfo: [NSLocalizedDescriptionKey: "Mini Studio subgraph не найден"])
         }
     }
 
-    func makeCoordinator() -> Coordinator { Coordinator(reloadToken, workflowJSON) }
-
-    final class Coordinator: NSObject, WKNavigationDelegate {
-        var lastReloadToken: UUID
-        let workflowJSON: Data?
-        init(_ token: UUID, _ workflowJSON: Data?) {
-            self.lastReloadToken = token
-            self.workflowJSON = workflowJSON
-        }
-
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            guard let workflowJSON,
-                  let json = String(data: workflowJSON, encoding: .utf8) else { return }
-            let encoded = Data(json.utf8).base64EncodedString()
-            let script = """
-            (async () => {
-              try {
-                const { app } = await import(new URL('scripts/app.js', document.baseURI).href);
-                const raw = atob('\(encoded)');
-                const bytes = Uint8Array.from(raw, c => c.charCodeAt(0));
-                const workflow = JSON.parse(new TextDecoder().decode(bytes));
-                await app.loadGraphData(workflow, true, true);
-                app.graph?.setDirtyCanvas?.(true, true);
-                return 'loaded';
-              } catch (e) {
-                console.error('Mini Studio workflow load failed', e);
-                return String(e);
+    func apply(_ state: [String: Any]) async throws {
+        try await loadWorkflowIfNeeded(force: false)
+        let data = try JSONSerialization.data(withJSONObject: state)
+        let encoded = data.base64EncodedString()
+        let result = try await js("""
+        const { app } = await import(new URL('scripts/app.js', document.baseURI).href);
+        const raw = atob('\(encoded)');
+        const state = JSON.parse(new TextDecoder().decode(Uint8Array.from(raw, c => c.charCodeAt(0))));
+        const root = app.rootGraph || app.graph;
+        const allGraphs = [root, ...Array.from(root?.subgraphs?.values?.() || [])];
+        for (const graph of allGraphs) {
+          for (const node of Array.from(graph?._nodes || graph?.nodes || [])) {
+            const id = String(node.id);
+            const patch = state.nodes?.[id];
+            if (!patch) continue;
+            for (const w of node.widgets || []) {
+              if (Object.prototype.hasOwnProperty.call(patch.values || {}, w.name)) {
+                w.value = patch.values[w.name];
+                w.callback?.(w.value, app.canvas, node, app.canvas?.graph_mouse, {});
               }
-            })();
-            """
-            webView.evaluateJavaScript(script)
+            }
+            if (patch.mode !== undefined) node.mode = patch.mode;
+          }
+        }
+        app.canvas?.setDirty?.(true, true);
+        return 'applied';
+        """)
+        if (result as? String) != "applied" { throw NSError(domain:"MiniStudio",code:31,userInfo:[NSLocalizedDescriptionKey:"Не удалось применить настройки в ComfyUI"]) }
+    }
+
+    func queue() async throws {
+        try await loadWorkflowIfNeeded(force: false)
+        // queuePrompt performs widget beforeQueued callbacks, graphToPrompt flattening and /prompt.
+        let result = try await js("""
+        const { app } = await import(new URL('scripts/app.js', document.baseURI).href);
+        const ok = await app.queuePrompt(0, 1);
+        return ok ? 'queued' : 'queue-failed';
+        """)
+        if (result as? String) != "queued" {
+            throw NSError(domain: "MiniStudio", code: 32, userInfo: [NSLocalizedDescriptionKey: "ComfyUI не принял Queue Prompt"])
         }
     }
 }
