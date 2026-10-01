@@ -1631,7 +1631,11 @@ private struct EmbeddedComfyEditor: View {
                 EmbeddedComfyWebView(url: url, reloadToken: reloadToken)
                     .ignoresSafeArea(edges: .bottom)
             } else {
-                ContentUnavailableView("Неверный адрес ComfyUI", systemImage: "wifi.exclamationmark")
+                VStack(spacing: 12) {
+                    Image(systemName: "wifi.exclamationmark").font(.largeTitle)
+                    Text("Неверный адрес ComfyUI").font(.headline)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .preferredColorScheme(.dark)
