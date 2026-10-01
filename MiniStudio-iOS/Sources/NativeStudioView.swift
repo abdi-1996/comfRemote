@@ -495,7 +495,9 @@ struct NativeStudioView: View {
         if width != nil || height != nil || length != nil {
             studioCard(title: "Format", icon: "rectangle.ratio.16.to.9") {
                 if let width, let height {
-                    MiniStudioResolutionEditor(width: width, height: height, length: length)
+                    MiniStudioResolutionEditor(width: width, height: height, length: length) { parameter, value in
+                        applyLiveParameter(parameter, value)
+                    }
                         .environmentObject(store)
                 }
 
@@ -1070,7 +1072,9 @@ struct NativeStudioView: View {
             NativeParameterEditor(
                 parameter: parameter,
                 multiline: parameter.kind == .text && parameter.value.count > 80
-            )
+            ) { parameter, value in
+                applyLiveParameter(parameter, value)
+            }
             .environmentObject(store)
         }
     }
@@ -1084,7 +1088,9 @@ struct NativeStudioView: View {
                 .font(.caption2.bold())
                 .foregroundStyle(.secondary)
 
-            NativeParameterEditor(parameter: parameter, multiline: false)
+            NativeParameterEditor(parameter: parameter, multiline: false) { parameter, value in
+                applyLiveParameter(parameter, value)
+            }
                 .environmentObject(store)
         }
         .frame(maxWidth: .infinity)
@@ -2219,6 +2225,14 @@ private struct MiniStudioResolutionEditor: View {
     let width: WorkflowParameter
     let height: WorkflowParameter
     let length: WorkflowParameter?
+    let onLiveChange: ((WorkflowParameter, String) -> Void)?
+
+    init(width: WorkflowParameter, height: WorkflowParameter, length: WorkflowParameter?, onLiveChange: ((WorkflowParameter, String) -> Void)? = nil) {
+        self.width = width
+        self.height = height
+        self.length = length
+        self.onLiveChange = onLiveChange
+    }
 
     @State private var ratio = "16:9"
     @State private var megapixels = "0.400"
@@ -2307,6 +2321,8 @@ private struct MiniStudioResolutionEditor: View {
         let h = max(32, Int((sqrt(mp * 1_000_000 * b / a) / 32).rounded()) * 32)
         store.setParameter(width, value: String(w))
         store.setParameter(height, value: String(h))
+        onLiveChange?(width, String(w))
+        onLiveChange?(height, String(h))
         megapixels = String(format: "%.3f", Double(w * h) / 1_000_000)
     }
 }
