@@ -246,88 +246,56 @@ struct NativeStudioView: View {
     private var referencesPanel: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                panelTitle(
-                    "References",
-                    subtitle: "Picture1–9 работают так же, как в Mini Studio node"
-                )
+                panelTitle("References", subtitle: "Только реальные входы выбранного workflow")
 
                 if let item = store.selected {
-                    let materials = sortedMaterials(store.materials(for: item))
-                    let activeCount = materials.filter {
-                        !disabledReferenceNodeIDs.contains($0.nodeID)
-                    }.count
+                    let materials = store.materials(for: item)
+                    let activeCount = materials.filter { !disabledReferenceNodeIDs.contains($0.nodeID) }.count
 
                     HStack {
-                        Label(
-                            "Активно \(activeCount) / \(materials.count)",
-                            systemImage: "checkmark.circle"
-                        )
-                        .font(.caption.bold())
-                        .foregroundStyle(.secondary)
-
+                        Label("Активно \(activeCount) / \(materials.count)", systemImage: "checkmark.circle")
+                            .font(.caption.bold()).foregroundStyle(.secondary)
                         Spacer()
-
-                        Button("Enable All") {
-                            disabledReferenceNodeIDs.removeAll()
+                        if !materials.isEmpty {
+                            Button("Enable All") { disabledReferenceNodeIDs.removeAll() }
+                                .font(.caption.bold())
                         }
-                        .font(.caption.bold())
                     }
-                    .padding(.horizontal, 2)
 
-                    LazyVGrid(
-                        columns: [
-                            GridItem(.adaptive(minimum: 145), spacing: 12)
-                        ],
-                        spacing: 12
-                    ) {
-                        ForEach(1...9, id: \.self) { index in
-                            let material = materialForPicture(index, in: materials)
-
-                            MiniStudioReferenceSlot(
-                                index: index,
-                                role: referenceRole(index),
-                                material: material,
-                                serverURL: serverURL,
-                                enabled: Binding(
-                                    get: {
-                                        guard let material else { return false }
-                                        return !disabledReferenceNodeIDs.contains(material.nodeID)
-                                    },
-                                    set: { enabled in
-                                        guard let material else { return }
-                                        if enabled {
-                                            disabledReferenceNodeIDs.remove(material.nodeID)
-                                        } else {
-                                            disabledReferenceNodeIDs.insert(material.nodeID)
+                    if materials.isEmpty {
+                        studioCard(title: "References", icon: "photo.on.rectangle.angled") {
+                            Text("В workflow нет поддерживаемых Load Image / Load Video входов.")
+                                .font(.subheadline).foregroundStyle(.secondary)
+                        }
+                    } else {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), spacing: 12)], spacing: 12) {
+                            ForEach(materials) { material in
+                                MiniStudioReferenceSlot(
+                                    material: material,
+                                    serverURL: serverURL,
+                                    enabled: Binding(
+                                        get: { !disabledReferenceNodeIDs.contains(material.nodeID) },
+                                        set: { enabled in
+                                            if enabled { disabledReferenceNodeIDs.remove(material.nodeID) }
+                                            else { disabledReferenceNodeIDs.insert(material.nodeID) }
                                         }
-                                    }
-                                ),
-                                previewImage: Binding(
-                                    get: {
-                                        guard let material else { return nil }
-                                        return referencePreviews[material.id]
-                                    },
-                                    set: { image in
-                                        guard let material else { return }
-                                        referencePreviews[material.id] = image
-                                    }
-                                ),
-                                onStatus: showMessage
-                            )
-                            .environmentObject(store)
+                                    ),
+                                    previewImage: Binding(
+                                        get: { referencePreviews[material.id] },
+                                        set: { referencePreviews[material.id] = $0 }
+                                    ),
+                                    onStatus: showMessage
+                                )
+                                .environmentObject(store)
+                            }
                         }
                     }
 
-                    Text("Bypass удаляет соответствующий reference-node из API prompt перед отправкой в ComfyUI и отсоединяет его входы.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .padding(.top, 2)
-                } else {
-                    noWorkflowCard
-                }
+                    Text("Список строится из реальных media-input нод workflow. Bypass относится к конкретной ноде.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                } else { noWorkflowCard }
             }
-            .padding(16)
-            .padding(.bottom, 28)
+            .padding(16).padding(.bottom, 28)
         }
     }
 
@@ -1677,9 +1645,7 @@ private struct EmbeddedComfyWebView: UIViewRepresentable {
 private struct MiniStudioReferenceSlot: View {
     @EnvironmentObject private var store: WorkflowStore
 
-    let index: Int
-    let role: String
-    let material: WorkflowMaterial?
+    let material: WorkflowMaterial
     let serverURL: String
     @Binding var enabled: Bool
     @Binding var previewImage: UIImage?
@@ -1692,7 +1658,7 @@ private struct MiniStudioReferenceSlot: View {
         VStack(alignment: .leading, spacing: 9) {
             PhotosPicker(
                 selection: $selection,
-                matching: material?.kind == .video ? .videos : .images
+                matching: material.kind == .video ? .videos : .images
             ) {
                 ZStack(alignment: .topLeading) {
                     RoundedRectangle(cornerRadius: 16)
@@ -1729,14 +1695,14 @@ private struct MiniStudioReferenceSlot: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
 
-                    Text("Picture \(index)")
+                    Text(material.nodeTitle)
                         .font(.caption2.bold())
                         .padding(.horizontal, 7)
                         .padding(.vertical, 4)
                         .background(.black.opacity(0.65), in: Capsule())
                         .padding(7)
 
-                    if material != nil && !enabled {
+                    if !enabled {
                         RoundedRectangle(cornerRadius: 16)
                             .fill(Color.black.opacity(0.64))
 
@@ -1761,39 +1727,31 @@ private struct MiniStudioReferenceSlot: View {
                 }
             }
             .buttonStyle(.plain)
-            .disabled(material == nil || !enabled || uploading)
+            .disabled(!enabled || uploading)
             .onChange(of: selection) { item in
                 guard let item else { return }
                 Task { await importItem(item) }
             }
-            .task(id: material?.currentValue) {
+            .task(id: material.currentValue) {
                 await loadExistingPreview()
             }
 
-            Text(role)
+            Text(material.kind == .video ? "Load Video" : "Load Image")
                 .font(.caption.bold())
                 .lineLimit(2)
 
             HStack {
                 Text(
-                    material == nil
-                        ? "Missing"
-                        : enabled
-                            ? "Active"
-                            : "Bypass"
+                    enabled ? "Active" : "Bypass"
                 )
                 .font(.caption2)
                 .foregroundStyle(
-                    material == nil
-                        ? Color.secondary
-                        : enabled
-                            ? Color.miniStudioAccent
-                            : Color.secondary
+                    enabled ? Color.miniStudioAccent : Color.secondary
                 )
 
                 Spacer()
 
-                if material != nil {
+                if true {
                     Toggle("", isOn: $enabled)
                         .labelsHidden()
                         .scaleEffect(0.82)
@@ -1808,7 +1766,7 @@ private struct MiniStudioReferenceSlot: View {
         .overlay(
             RoundedRectangle(cornerRadius: 19)
                 .stroke(
-                    material != nil && enabled
+                    enabled
                         ? Color.miniStudioAccent.opacity(0.18)
                         : Color.white.opacity(0.05),
                     lineWidth: 1
@@ -1819,7 +1777,6 @@ private struct MiniStudioReferenceSlot: View {
     @MainActor
     private func loadExistingPreview() async {
         guard previewImage == nil,
-              let material,
               material.kind == .image,
               !material.currentValue.isEmpty,
               !serverURL.isEmpty else { return }
