@@ -1821,8 +1821,6 @@ private struct MiniStudioReferenceSlot: View {
 
     @MainActor
     private func importItem(_ item: PhotosPickerItem) async {
-        guard let material else { return }
-
         guard !serverURL.isEmpty else {
             onStatus("Сначала укажи адрес ComfyUI в Settings.")
             return
