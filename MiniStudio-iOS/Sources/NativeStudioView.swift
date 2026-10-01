@@ -86,7 +86,9 @@ struct NativeStudioView: View {
             .sheet(item: $selectedResult) { result in
                 ResultDetailView(result: result)
             }
-            .fullScreenCover(isPresented: $showingComfyEditor) {
+            .fullScreenCover(isPresented: $showingComfyEditor, onDismiss: {
+                Task { await syncWorkflowFromFrontend() }
+            }) {
                 EmbeddedComfyEditor(bridge: comfyBridge)
             }
             .sheet(isPresented: $showingImporter) {
@@ -110,6 +112,8 @@ struct NativeStudioView: View {
                 loadSavedResults()
                 comfyBridge.connect(serverURL, workflowJSON: store.selected?.workflowJSON)
                 Task {
+                    try? await Task.sleep(nanoseconds: 900_000_000)
+                    await syncWorkflowFromFrontend()
                     await refreshConnection()
                     await syncResultsFromComfyUI()
                 }
@@ -126,6 +130,10 @@ struct NativeStudioView: View {
                 disabledReferenceNodeIDs.removeAll()
                 referencePreviews.removeAll()
                 comfyBridge.connect(serverURL, workflowJSON: store.selected?.workflowJSON)
+                Task {
+                    try? await Task.sleep(nanoseconds: 700_000_000)
+                    await syncWorkflowFromFrontend()
+                }
             }
             .onChange(of: serverURL) { newValue in
                 comfyBridge.connect(newValue, workflowJSON: store.selected?.workflowJSON)
@@ -1398,6 +1406,16 @@ struct NativeStudioView: View {
     }
 
     @MainActor
+    private func syncWorkflowFromFrontend() async {
+        do {
+            guard let snapshot = try await comfyBridge.snapshot() else { return }
+            store.updateFromEditor(workflow: snapshot.workflow, output: snapshot.output)
+        } catch {
+            // Keep the last usable local workflow if the frontend is still loading.
+        }
+    }
+
+    @MainActor
     private func stopGeneration() async {
         do {
             try await ComfyClient.interrupt(base: serverURL)
@@ -1563,14 +1581,14 @@ private struct EmbeddedComfyEditor: View {
             HStack {
                 Button { dismiss() } label: { Label("Назад", systemImage: "chevron.left") }
                 Spacer()
-                Text("Mini Studio · Subgraph").font(.headline)
+                Text("Workflow").font(.headline)
                 Spacer()
                 Button { bridge.reload() } label: { Image(systemName: "arrow.clockwise") }
             }
             .padding(.horizontal, 14).frame(height: 52).background(Color.black)
             ComfyBridgeWebView(bridge: bridge).ignoresSafeArea(edges: .bottom)
         }
-        .onAppear { Task { try? await bridge.openMiniStudioSubgraph() } }
+        .onAppear { Task { try? await bridge.ensureFlatWorkflow() } }
         .preferredColorScheme(.dark)
     }
 }
@@ -1633,31 +1651,66 @@ private final class ComfyFrontendBridge: NSObject, ObservableObject, WKNavigatio
         const raw = atob('\(encoded)');
         const workflow = JSON.parse(new TextDecoder().decode(Uint8Array.from(raw, c => c.charCodeAt(0))));
         await app.loadGraphData(workflow, true, true);
+        const root = app.rootGraph || app.graph;
+        let changed = true;
+        while (changed) {
+          changed = false;
+          for (const node of Array.from(root?.nodes || root?._nodes || [])) {
+            if (!node?.subgraph) continue;
+            const ok = root.unpackSubgraph(node, { skipMissingNodes: false });
+            if (!ok) throw new Error('Не удалось распаковать subgraph: ' + (node.title || node.id));
+            changed = true;
+            break;
+          }
+        }
+        app.canvas?.setGraph?.(root);
         app.canvas?.setDirty?.(true, true);
         return 'loaded';
         """)
         ready = (result as? String) == "loaded"
     }
 
-    func openMiniStudioSubgraph() async throws {
+    func ensureFlatWorkflow() async throws {
         try await loadWorkflowIfNeeded(force: false)
-        let result = try await js("""
+        _ = try await js("""
         const { app } = await import(new URL('scripts/app.js', document.baseURI).href);
         const root = app.rootGraph || app.graph;
-        const nodes = Array.from(root?._nodes || root?.nodes || []);
-        const node = nodes.find(n => {
-          const t = String(n.title || '').toLowerCase();
-          const type = String(n.type || '').toLowerCase();
-          return !!n.subgraph && (t.includes('mini studio') || type.includes('mini') || type.includes('studio'));
-        }) || nodes.find(n => !!n.subgraph);
-        if (!node?.subgraph) return 'missing-subgraph';
-        app.canvas.setGraph(node.subgraph);
-        app.canvas.setDirty(true, true);
-        return 'opened';
-        """)
-        if (result as? String) != "opened" {
-            throw NSError(domain: "MiniStudio", code: 30, userInfo: [NSLocalizedDescriptionKey: "Mini Studio subgraph не найден"])
+        let changed = true;
+        while (changed) {
+          changed = false;
+          const nodes = Array.from(root?.nodes || root?._nodes || []);
+          for (const node of nodes) {
+            if (!node?.subgraph) continue;
+            const ok = root.unpackSubgraph(node, { skipMissingNodes: false });
+            if (!ok) throw new Error('Не удалось распаковать subgraph: ' + (node.title || node.id));
+            changed = true;
+            break;
+          }
         }
+        app.canvas?.setGraph?.(root);
+        app.canvas?.setDirty?.(true, true);
+        return 'flat';
+        """)
+    }
+
+    struct Snapshot {
+        let workflow: Any
+        let output: Any
+    }
+
+    func snapshot() async throws -> Snapshot? {
+        try await ensureFlatWorkflow()
+        guard let result = try await js("""
+        const { app } = await import(new URL('scripts/app.js', document.baseURI).href);
+        const workflow = app.graph.serialize();
+        const prompt = await app.graphToPrompt();
+        return JSON.stringify({ workflow, output: prompt.output });
+        """) as? String,
+        let data = result.data(using: .utf8),
+        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+        let workflow = object["workflow"],
+        let output = object["output"] else { return nil }
+        return Snapshot(workflow: workflow, output: output)
     }
 
     func apply(_ state: [String: Any]) async throws {
