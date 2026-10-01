@@ -9,20 +9,24 @@ private extension Color {
 }
 
 private enum MiniStudioPanel: String, CaseIterable, Identifiable {
-    case references = "References"
-    case models = "Models & LoRAs"
-    case workflows = "Workflows"
     case generation = "Generate"
+    case references = "References"
+    case controls = "Controls"
+    case models = "Models & LoRAs"
+    case gallery = "Gallery"
+    case workflows = "Workflows"
     case settings = "Settings"
 
     var id: String { rawValue }
 
     var icon: String {
         switch self {
-        case .references: return "photo.on.rectangle.angled"
-        case .models: return "square.stack.3d.up"
-        case .workflows: return "point.3.connected.trianglepath.dotted"
         case .generation: return "sparkles"
+        case .references: return "photo.on.rectangle.angled"
+        case .controls: return "slider.horizontal.3"
+        case .models: return "square.stack.3d.up"
+        case .gallery: return "rectangle.stack"
+        case .workflows: return "point.3.connected.trianglepath.dotted"
         case .settings: return "gearshape"
         }
     }
@@ -224,16 +228,13 @@ struct NativeStudioView: View {
     @ViewBuilder
     private var panelContent: some View {
         switch panel {
-        case .generation:
-            generationPanel
-        case .references:
-            referencesPanel
-        case .models:
-            modelsPanel
-        case .workflows:
-            workflowsPanel
-        case .settings:
-            settingsPanel
+        case .generation: generationPanel
+        case .references: referencesPanel
+        case .controls: controlsPanel
+        case .models: modelsPanel
+        case .gallery: galleryPanel
+        case .workflows: workflowsPanel
+        case .settings: settingsPanel
         }
     }
 
@@ -403,6 +404,25 @@ struct NativeStudioView: View {
                     extraQuickCard(item)
                 } else {
                     noWorkflowCard
+                }
+            }
+            .padding(16)
+            .padding(.bottom, 30)
+        }
+    }
+
+    private var galleryPanel: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                panelTitle("Gallery", subtitle: "Результаты генерации")
+                if results.isEmpty {
+                    studioCard(title: "Results", icon: "rectangle.stack") {
+                        Text("После генерации фото, видео и аудио появятся здесь.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    recentResults
                 }
             }
             .padding(16)
