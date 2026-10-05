@@ -48,8 +48,28 @@ function collectGraphs() {
             studio.subgraph,
             studio.innerGraph,
             studio.workflowGraph,
-            studio.rootGraph
+            studio.rootGraph,
+            studio._graph
         ]) add(candidate);
+
+        // Mini Studio versions can keep their real workflow graph behind different
+        // internal properties. Inspect only graph/workflow-like branches and stop
+        // after a shallow depth so we can discover them without walking the page.
+        const inspected = new Set();
+        function inspectGraphHolders(object, depth) {
+            if (!object || typeof object !== 'object' || inspected.has(object) || depth < 0) return;
+            inspected.add(object);
+            for (const key of Object.keys(object)) {
+                if (!/(graph|workflow|studio|state|sub)/i.test(key)) continue;
+                let value;
+                try { value = object[key]; } catch { continue; }
+                if (!value || typeof value !== 'object') continue;
+                const nodes = value?._nodes || value?.nodes;
+                if (Array.isArray(nodes)) add(value);
+                if (depth > 0) inspectGraphHolders(value, depth - 1);
+            }
+        }
+        inspectGraphHolders(studio, 2);
     }
     return graphs;
 }
