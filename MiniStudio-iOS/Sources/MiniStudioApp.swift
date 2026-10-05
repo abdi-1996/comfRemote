@@ -19,6 +19,7 @@ struct RootView: View {
     @State private var draft = ""
     @State private var showingServer = false
     @State private var showingDownloads = false
+    @State private var showingModels = false
     @State private var confirmReload = false
     @State private var confirmCreate = false
     @Environment(\.scenePhase) private var scenePhase
@@ -32,11 +33,16 @@ struct RootView: View {
                     Text(browser.status).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer(minLength: 0)
+                Button { showingModels = true } label: { Image(systemName: "shippingbox.fill") }
+                    .accessibilityLabel("Models and LoRA")
+                    .disabled(!browser.connected)
                 Button { browser.openStudio() } label: { Image(systemName: "rectangle.expand.vertical") }
                     .accessibilityLabel("Open Mini Studio")
                 Menu {
                     Button { browser.openStudio() } label: { Label("Open Mini Studio", systemImage: "sparkles") }
                     Button { confirmCreate = true } label: { Label("Add Mini Studio to workflow", systemImage: "plus.rectangle") }
+                    Button { showingModels = true } label: { Label("Models & LoRA", systemImage: "shippingbox") }
+                        .disabled(!browser.connected)
                     Button { showingDownloads = true } label: { Label("Downloads", systemImage: "arrow.down.circle") }
                     Button { confirmReload = true } label: { Label("Reload connection", systemImage: "arrow.clockwise") }
                     Button { draft = address; showingServer = true } label: { Label("Server settings", systemImage: "network") }
@@ -66,6 +72,7 @@ struct RootView: View {
         .background(Color(white: 0.04)).tint(.mint)
         .sheet(isPresented: $showingServer) { serverSheet }
         .sheet(isPresented: $showingDownloads) { downloadsSheet }
+        .sheet(isPresented: $showingModels) { ModelBrowserView(browser: browser) }
         .sheet(item: $browser.sharedFile) { ShareView(url: $0.url) }
         .confirmationDialog("Reload ComfyUI?", isPresented: $confirmReload, titleVisibility: .visible) {
             Button("Reload") { browser.reload() }
