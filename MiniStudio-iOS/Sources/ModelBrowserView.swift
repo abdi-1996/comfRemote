@@ -2,6 +2,7 @@ import SwiftUI
 
 struct LoaderTarget: Identifiable, Codable, Hashable {
     let id: String
+    let graphIndex: Int
     let nodeId: String
     let nodeTitle: String
     let nodeType: String
