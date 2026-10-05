@@ -114,11 +114,19 @@ struct ModelBrowserView: View {
                     }
                     .padding()
                 } else if browser.loaderTargets.isEmpty {
-                    ContentUnavailableView(
-                        "No model loaders found",
-                        systemImage: "shippingbox",
-                        description: Text("Open the MiniMax H3 workflow in ComfyUI, then tap Refresh.")
-                    )
+                    VStack(spacing: 14) {
+                        Image(systemName: "shippingbox")
+                            .font(.system(size: 48))
+                            .foregroundStyle(.secondary)
+                        Text("No model loaders found")
+                            .font(.headline)
+                        Text("Open the MiniMax H3 workflow in ComfyUI, then tap Refresh.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .padding(28)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     List(browser.loaderTargets) { target in
                         NavigationLink {
