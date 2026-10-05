@@ -1,8 +1,11 @@
-name: Build Mini Studio iPhone
+name: Build Mini Studio iPhone v1.1
 on:
   push:
-    branches: [mini-studio-ios-1.0]
-    paths: ['MiniStudio-iOS/**', '.github/workflows/mini-studio-ios.yml']
+    branches: [mini-studio-ios-1.1]
+    paths:
+      - 'MiniStudio-iOS/**'
+      - 'MiniStudio-ModelPicker/**'
+      - '.github/workflows/mini-studio-ios.yml'
   workflow_dispatch:
 permissions:
   contents: read
@@ -14,17 +17,18 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install XcodeGen
         run: brew install xcodegen
-      - name: Generate project and test bridge
+      - name: Validate bridges and companion
         working-directory: MiniStudio-iOS
         run: |
           node --test Tests/bridge.test.mjs
+          python3 -m py_compile ../MiniStudio-ModelPicker/__init__.py
           xcodegen generate
       - name: Build for iPhone
         working-directory: MiniStudio-iOS
         run: |
           set -o pipefail
-          xcodebuild -project MiniStudio.xcodeproj -scheme MiniStudio -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build > build.log 2>&1 || { tail -100 build.log; exit 1; }
-          tail -10 build.log
+          xcodebuild -project MiniStudio.xcodeproj -scheme MiniStudio -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build > build.log 2>&1 || { tail -120 build.log; exit 1; }
+          tail -15 build.log
       - name: Package unsigned IPA
         working-directory: MiniStudio-iOS
         run: |
@@ -34,15 +38,17 @@ jobs:
           test -f package/Payload/MiniStudio.app/studio-bridge.js
           plutil -lint package/Payload/MiniStudio.app/Info.plist
           cd package
-          /usr/bin/zip -qry ../MiniStudio-1.0.0-unsigned.ipa Payload
+          /usr/bin/zip -qry ../MiniStudio-1.1.0-unsigned.ipa Payload
+      - name: Package Windows model picker
+        run: |
+          /usr/bin/zip -qry MiniStudio-iOS/MiniStudio-ModelPicker.zip MiniStudio-ModelPicker
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: MiniStudio-iPhone-1.0.0
+          name: MiniStudio-iPhone-1.1.0
           path: |
-            MiniStudio-iOS/*.ipa
-            MiniStudio-iOS/MiniStudio-iPhone.png
+            MiniStudio-iOS/MiniStudio-1.1.0-unsigned.ipa
+            MiniStudio-iOS/MiniStudio-ModelPicker.zip
             MiniStudio-iOS/*.log
           if-no-files-found: error
           retention-days: 14
-
