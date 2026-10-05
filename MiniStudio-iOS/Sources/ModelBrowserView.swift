@@ -8,8 +8,8 @@ struct LoaderTarget: Identifiable, Codable, Hashable {
     let nodeType: String
     let widget: String
     let category: String
-    let value: String
-    let options: [String]
+    var value: String
+    var options: [String]
 }
 
 private struct LoaderTargetDetailView: View {
