@@ -1,20 +1,62 @@
-# Mini Studio for iPhone 1.0.0
+# Mini Studio for iPhone 1.1.0
 
-Native SwiftUI + WKWebView client for your existing ComfyUI Mini Studio v0.4.4+ installation. Requires iOS 16+ and a running ComfyUI computer. It does not run H3 on the phone.
+Native SwiftUI + WKWebView client for your existing ComfyUI Mini Studio installation. Requires iOS 16+ and a running ComfyUI computer. H3 generation remains on the PC GPU.
 
-## Use
-1. Sign the unsigned IPA with your own Apple signing setup and install it.
-2. Keep Mini Studio custom nodes installed in ComfyUI on the computer. Run ComfyUI listening on its network interface (for example `--listen 0.0.0.0`).
-3. Connect iPhone and computer using the same Wi-Fi or Tailscale. Enter the computer address such as `http://100.x.x.x:8188` in the app. Do not use localhost on iPhone.
-4. Allow Local Network access. Open the Mini Studio workflow. The app opens its fullscreen UI. Alternatively choose **Add Mini Studio to workflow** from the app menu. This adds the installed node without removing existing nodes.
-5. References, model selection, bypass, prompts, progress and results are the existing Mini Studio interface served by your computer. Use **Download** on a result to share/save it. Downloads also appear in Files → On My iPhone → Mini Studio.
+## New in 1.1
 
-The app keeps persistent website data and cookies. On foreground return it asks Mini Studio to reconcile the queue/history while preserving workflow edits. ComfyUI handles WebSocket reconnects. iOS can suspend the web view; missed previews are not reconstructed. If the web process is killed, the page reloads. Save workflow changes before manual reload. The app cannot guarantee restoration of unsaved changes after OS termination.
+- **Models & LoRA** button in the iPhone top bar.
+- Reads model/LoRA loader widgets from the **real currently opened ComfyUI workflow**.
+- Search and select models already exposed by each loader.
+- **Browse on PC** opens the native Windows file picker on the ComfyUI computer.
+- Selected model is written back into the real loader widget, marks the graph changed, and reconciles Mini Studio.
+- Supports diffusion models, checkpoints, text encoders, VAE and LoRA loaders.
+- External model files selected through Browse on PC are imported into the matching ComfyUI models folder by symlink, hardlink, or copy fallback.
 
-Only scripts on the configured server origin receive the Mini Studio bridge. HTTP is supported for local/Tailscale servers. HTTPS certificate validation is not bypassed. Different-origin redirects require entering the final server address. Generation continues on the PC even while the phone is locked.
+## Install
+
+1. Build/sign and install `MiniStudio-1.1.0-unsigned.ipa` as usual.
+2. Keep your existing Mini Studio custom node installed in ComfyUI.
+3. Install the companion folder `MiniStudio-ModelPicker` into:
+   `ComfyUI/custom_nodes/MiniStudio-ModelPicker`
+   You can also run `install_to_comfyui.bat` from that folder and paste your ComfyUI folder path.
+4. Restart ComfyUI.
+5. Start ComfyUI with network access, for example `--listen 0.0.0.0 --port 8188`.
+6. Connect the iPhone through the same Wi-Fi or Tailscale address.
+7. Open your H3 workflow and tap the **box icon → Models & LoRA**.
+
+Normal model selection from ComfyUI works even without the companion extension. The companion is only required for **Browse on PC**.
+
+## Model Browser behavior
+
+Mini Studio scans the active graph (including nested/subgraph references it can reach) and detects file-selection widgets such as:
+
+- UNET / diffusion model
+- checkpoint
+- text encoder / CLIP / Qwen
+- VAE
+- LoRA
+
+Selecting an entry from the iPhone changes that exact widget in the workflow. Browse on PC sends a same-origin request to ComfyUI; Windows opens a file picker locally. No separate cloud server is used.
+
+Supported file extensions for the Windows picker:
+`.safetensors`, `.ckpt`, `.pt`, `.pth`, `.bin`, `.gguf`.
+
+## Existing behavior
+
+References, bypass, prompts, generation, progress and results continue to use the installed Mini Studio interface served by the PC. Downloads appear in Files → On My iPhone → Mini Studio.
+
+The app keeps persistent website data and cookies. On foreground return it asks Mini Studio to reconcile queue/history while preserving workflow edits. Generation continues on the PC if the iPhone is locked or the app is suspended.
 
 ## Build
-Install Xcode and XcodeGen on macOS, run `xcodegen generate`, then build scheme MiniStudio. The GitHub Actions workflow builds device and simulator targets, packages an **unsigned** IPA and launches the app in an iPhone simulator. Apple signing credentials are not included.
 
-## Validation scope
-Bridge tests cover resume, opening, missing extension and preserving existing nodes on explicit creation. CI validates compilation and simulator launch. Real iPhone, Tailscale, GPU generation and end-to-end imports/downloads require testing on your server.
+The branch is `mini-studio-ios-1.1`.
+
+GitHub Actions:
+- runs bridge tests;
+- syntax-checks the Windows companion;
+- generates the Xcode project;
+- builds the unsigned iPhone app;
+- packages `MiniStudio-1.1.0-unsigned.ipa`;
+- packages `MiniStudio-ModelPicker.zip`.
+
+Real iPhone/Tailscale/GPU generation and the physical Windows file-picker interaction still require a test against your ComfyUI installation.
