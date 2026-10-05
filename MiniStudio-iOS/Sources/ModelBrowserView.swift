@@ -148,10 +148,10 @@ struct ModelBrowserView: View {
             }
             .navigationTitle("Models & LoRA")
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .primaryAction) {
                     Button {
                         browser.refreshLoaderTargets()
                     } label: {
