@@ -1,6 +1,21 @@
 import SwiftUI
 import WebKit
 
+private struct LoaderCatalogEnvelope: Decodable {
+    let ok: Bool
+    let targets: [LoaderTarget]
+    let error: String?
+}
+
+private struct LoaderCommandEnvelope: Decodable {
+    let ok: Bool
+    let error: String?
+    let cancelled: Bool?
+    let value: String?
+    let filename: String?
+    let action: String?
+}
+
 @MainActor
 final class StudioBrowser: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
     @Published var connected = false
@@ -9,6 +24,9 @@ final class StudioBrowser: NSObject, ObservableObject, WKNavigationDelegate, WKU
     @Published var message = ""
     @Published var sharedFile: SharedFile?
     @Published var downloads: [URL] = []
+    @Published var loaderTargets: [LoaderTarget] = []
+    @Published var modelPickerBusy = false
+    @Published var modelPickerMessage = ""
     private var server: URL?
     private var destinations: [ObjectIdentifier: URL] = [:]
     private var connectionID = UUID()
@@ -98,13 +116,128 @@ final class StudioBrowser: NSObject, ObservableObject, WKNavigationDelegate, WKU
         }
     }
 
-    private func bridge(_ mode: String) async throws -> String {
+    private func bridge(_ mode: String, payload: [String: Any] = [:]) async throws -> String {
         guard let path = Bundle.main.url(forResource: "studio-bridge", withExtension: "js") else {
             throw NSError(domain: "MiniStudio", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing bridge"])
         }
         let source = try String(contentsOf: path, encoding: .utf8)
-        let result = try await webView.callAsyncJavaScript(source, arguments: ["mode": mode], in: nil, contentWorld: .page)
+        let result = try await webView.callAsyncJavaScript(
+            source,
+            arguments: ["mode": mode, "payload": payload],
+            in: nil,
+            contentWorld: .page
+        )
         return result as? String ?? "waiting"
+    }
+
+    func refreshLoaderTargets() {
+        guard connected, isServer(webView.url) else {
+            modelPickerMessage = "Connect to ComfyUI first."
+            return
+        }
+        guard !modelPickerBusy else { return }
+
+        Task {
+            modelPickerBusy = true
+            defer { modelPickerBusy = false }
+            do {
+                let raw = try await bridge("loader-catalog")
+                guard let data = raw.data(using: .utf8) else {
+                    throw NSError(domain: "MiniStudio", code: 20, userInfo: [NSLocalizedDescriptionKey: "Invalid loader catalog"])
+                }
+                let catalog = try JSONDecoder().decode(LoaderCatalogEnvelope.self, from: data)
+                guard catalog.ok else {
+                    throw NSError(domain: "MiniStudio", code: 21, userInfo: [NSLocalizedDescriptionKey: catalog.error ?? "Could not read model loaders."])
+                }
+                loaderTargets = catalog.targets
+                modelPickerMessage = catalog.targets.isEmpty
+                    ? "No model or LoRA loader controls were found in the current workflow."
+                    : "Loaded \(catalog.targets.count) model controls from the real workflow."
+            } catch {
+                modelPickerMessage = "Could not read workflow models: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func loaderPayload(_ target: LoaderTarget, value: String? = nil) -> [String: Any] {
+        var payload: [String: Any] = [
+            "graphIndex": target.graphIndex,
+            "nodeId": target.nodeId,
+            "nodeType": target.nodeType,
+            "nodeTitle": target.nodeTitle,
+            "widget": target.widget,
+            "category": target.category
+        ]
+        if let value { payload["value"] = value }
+        return payload
+    }
+
+    func applyLoader(_ target: LoaderTarget, value: String) {
+        guard !modelPickerBusy else { return }
+        Task {
+            modelPickerBusy = true
+            defer { modelPickerBusy = false }
+            do {
+                let raw = try await bridge("set-loader", payload: loaderPayload(target, value: value))
+                guard let data = raw.data(using: .utf8) else {
+                    throw NSError(domain: "MiniStudio", code: 22, userInfo: [NSLocalizedDescriptionKey: "Invalid loader response"])
+                }
+                let result = try JSONDecoder().decode(LoaderCommandEnvelope.self, from: data)
+                guard result.ok else {
+                    throw NSError(domain: "MiniStudio", code: 23, userInfo: [NSLocalizedDescriptionKey: result.error ?? "Could not apply model."])
+                }
+                if let index = loaderTargets.firstIndex(where: { $0.id == target.id }) {
+                    loaderTargets[index].value = result.value ?? value
+                    if !loaderTargets[index].options.contains(value) {
+                        loaderTargets[index].options.append(value)
+                    }
+                }
+                modelPickerMessage = "Applied \(value) to \(target.nodeTitle)."
+            } catch {
+                modelPickerMessage = "Model change failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func browseOnPC(_ target: LoaderTarget) {
+        guard !modelPickerBusy else { return }
+        Task {
+            modelPickerBusy = true
+            modelPickerMessage = "Windows file picker opened on the ComfyUI computer."
+            defer { modelPickerBusy = false }
+            do {
+                let raw = try await bridge("pick-loader", payload: loaderPayload(target))
+                guard let data = raw.data(using: .utf8) else {
+                    throw NSError(domain: "MiniStudio", code: 24, userInfo: [NSLocalizedDescriptionKey: "Invalid picker response"])
+                }
+                let result = try JSONDecoder().decode(LoaderCommandEnvelope.self, from: data)
+                if result.cancelled == true {
+                    modelPickerMessage = "Model selection cancelled."
+                    return
+                }
+                guard result.ok, let filename = result.value ?? result.filename else {
+                    throw NSError(domain: "MiniStudio", code: 25, userInfo: [NSLocalizedDescriptionKey: result.error ?? "Could not select model."])
+                }
+
+                if let index = loaderTargets.firstIndex(where: { $0.id == target.id }) {
+                    loaderTargets[index].value = filename
+                    if !loaderTargets[index].options.contains(filename) {
+                        loaderTargets[index].options.append(filename)
+                    }
+                }
+
+                let action: String
+                switch result.action {
+                case "linked": action = "Linked and applied"
+                case "hardlinked": action = "Hard-linked and applied"
+                case "copied": action = "Imported and applied"
+                default: action = "Applied"
+                }
+                modelPickerMessage = "\(action) \(filename)."
+            } catch {
+                modelPickerMessage = "Browse on PC failed: \(error.localizedDescription)"
+            }
+        }
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
